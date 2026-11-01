@@ -121,13 +121,13 @@ end
 
 local function makeEnemies(random, floorType)
   local enemyTypesByFloor = {
-    basement = { 'scar', 'spider', 'fly' },
-    living_room = { 'scar', 'spider' },
-    kitchen = { 'scar', 'fly' },
-    bedroom = { 'scar', 'spider' },
-    attic = { 'spider', 'fly' },
-    roof = { 'scar', 'fly' },
-    sky = { 'spider', 'fly' },
+    basement = { 'scar', 'spider', 'fly', 'centipede' },
+    living_room = { 'scar', 'spider', 'centipede' },
+    kitchen = { 'scar', 'fly', 'centipede' },
+    bedroom = { 'scar', 'spider', 'centipede' },
+    attic = { 'spider', 'fly', 'centipede' },
+    roof = { 'scar', 'fly', 'centipede' },
+    sky = { 'spider', 'fly', 'centipede' },
   }
   local enemyTypes = enemyTypesByFloor[floorType] or enemyTypesByFloor.basement
   local minimumCount = (floorType == 'sky' or floorType == 'roof') and 3 or 2
@@ -236,6 +236,8 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
   local bossTypes
   if floorType == 'basement' or floorType == 'living_room' then
     bossTypes = { 'crawler', 'lilsnake' }
+  elseif floorType == 'bedroom' then
+    bossTypes = { 'stuffing' }
   else
     bossTypes = { 'geometric' }
   end
@@ -245,6 +247,7 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
     crawler = 'Crawler Nest',
     lilsnake = "Lil' Snake Den",
     geometric = 'Geometric Core',
+    stuffing = 'The Stuffing',
   }
   bossRoom.name = bossNames[bossRoom.bossType]
   bossRoom.boss = true

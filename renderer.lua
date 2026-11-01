@@ -26,10 +26,15 @@ function Renderer.new(atlas)
   local renderer = setmetatable({ atlas = atlas }, Renderer)
   renderer.enemyImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_002_scar.png')
   renderer.spiderImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_001_spider.png')
+  renderer.centipedeImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/enemies_004_centipede.png')
   renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_001_thecrawler.png')
   renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_003_thegeometric.png')
+  renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_004_thestuffing.png')
+  renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_004_thestuffingcharred.png')
   renderer.geometricPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thegeometric_portrait.png')
+  renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thestuffing_portrait.png')
   renderer.acidImage = love.graphics.newImage('resources/sprites/attack/acid_attack.png')
+  renderer.stuffingProjectileImage = love.graphics.newImage('resources/sprites/attack/thestuffing_attack.png')
   renderer.sweatImage = love.graphics.newImage('resources/sprites/attack/sweatattack.png')
   renderer.sweatSplashImage = love.graphics.newImage('resources/sprites/attack/sweat_splash.png')
   renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
@@ -63,10 +68,15 @@ function Renderer.new(atlas)
   renderer.lilSnakeImage = LilSnake.image
   renderer.enemyImage:setFilter('nearest', 'nearest')
   renderer.spiderImage:setFilter('nearest', 'nearest')
+  renderer.centipedeImage:setFilter('nearest', 'nearest')
   renderer.crawlerImage:setFilter('nearest', 'nearest')
   renderer.geometricImage:setFilter('nearest', 'nearest')
+  renderer.stuffingImage:setFilter('nearest', 'nearest')
+  renderer.stuffingCharredImage:setFilter('nearest', 'nearest')
   renderer.geometricPortrait:setFilter('nearest', 'nearest')
+  renderer.stuffingPortrait:setFilter('nearest', 'nearest')
   renderer.acidImage:setFilter('nearest', 'nearest')
+  renderer.stuffingProjectileImage:setFilter('nearest', 'nearest')
   renderer.matthewPortrait:setFilter('nearest', 'nearest')
   renderer.crawlerPortrait:setFilter('nearest', 'nearest')
   renderer.lilSnakePortrait:setFilter('nearest', 'nearest')
@@ -87,6 +97,18 @@ function Renderer.new(atlas)
   for frame = 0, 5 do
     renderer.geometricQuads[frame] = love.graphics.newQuad(
       frame * 64, 0, 64, 64, renderer.geometricImage:getDimensions()
+    )
+  end
+  renderer.stuffingQuads = {}
+  for frame = 0, 4 do
+    renderer.stuffingQuads[frame] = love.graphics.newQuad(
+      frame * 64, 0, 64, 64, renderer.stuffingImage:getDimensions()
+    )
+  end
+  renderer.stuffingCharredQuads = {}
+  for frame = 0, 4 do
+    renderer.stuffingCharredQuads[frame] = love.graphics.newQuad(
+      frame * 64, 0, 64, 64, renderer.stuffingCharredImage:getDimensions()
     )
   end
   renderer.matthewPortraitQuad = love.graphics.newQuad(0, 0, 64, 64, renderer.matthewPortrait:getDimensions())
@@ -164,7 +186,8 @@ function Renderer:drawBossHealthBar(boss)
   local height = 18
   local y = love.graphics.getHeight() - 42
   local label = boss.kind == 'lilsnake' and "LIL' SNAKE"
-    or boss.kind == 'geometric' and 'THE GEOMETRIC' or 'THE CRAWLER'
+    or boss.kind == 'geometric' and 'THE GEOMETRIC'
+    or boss.kind == 'stuffing' and 'THE STUFFING' or 'THE CRAWLER'
 
   love.graphics.setFont(self.smallFont)
   love.graphics.setColor(0.98, 0.82, 0.56, 1)
@@ -180,7 +203,8 @@ function Renderer:drawBossHealthBar(boss)
   love.graphics.setColor(1, 0.69, 0.18, 1)
   love.graphics.rectangle('fill', x, y, barWidth * healthRatio, height, 2, 2)
   local portrait = boss.kind == 'geometric' and self.geometricPortrait
-    or boss.kind == 'lilsnake' and self.lilSnakePortrait or self.crawlerPortrait
+    or boss.kind == 'lilsnake' and self.lilSnakePortrait
+    or boss.kind == 'stuffing' and self.stuffingPortrait or self.crawlerPortrait
   local portraitX = panelX + width - iconSize
   local portraitY = y + (height - iconSize) / 2
   love.graphics.setColor(1, 1, 1, 1)
@@ -382,7 +406,30 @@ function Renderer:drawEnemy(enemy, camera)
     return
   end
 
-  local quad = self.enemyQuads[enemy:getFrame()]
+  if enemy.kind == 'centipede' then
+    local scale = (enemy.scale or 1) * 2
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(
+      self.centipedeImage,
+      math.floor(enemy.x - camera.x),
+      math.floor(enemy.y - camera.y),
+      0,
+      scale,
+      scale,
+      (self.centipedeImage:getWidth() or 32) / 2,
+      (self.centipedeImage:getHeight() or 32) / 2
+    )
+    return
+  end
+
+  local frameName = 'idle_0'
+  if enemy.anim and type(enemy.anim.getFrame) == 'function' then
+    frameName = enemy.anim:getFrame()
+  elseif type(enemy.getFrame) == 'function' then
+    frameName = enemy:getFrame()
+  end
+
+  local quad = self.enemyQuads[frameName]
   if not quad then
     return
   end
@@ -445,6 +492,55 @@ function Renderer:drawAcidProjectile(projectile, camera)
 
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(self.acidImage, math.floor(projectile.x - camera.x), math.floor(projectile.y - camera.y), 0, 2, 2, self.acidImage:getWidth() / 2, self.acidImage:getHeight() / 2)
+end
+
+function Renderer:drawStuffingProjectile(projectile, camera)
+  if not projectile or not projectile.alive then
+    return
+  end
+
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(
+    self.stuffingProjectileImage,
+    math.floor(projectile.x - camera.x),
+    math.floor(projectile.y - camera.y),
+    math.atan2(projectile.vy, projectile.vx),
+    1.8,
+    1.8,
+    self.stuffingProjectileImage:getWidth() / 2,
+    self.stuffingProjectileImage:getHeight() / 2
+  )
+end
+
+function Renderer:drawStuffing(boss, camera)
+  if not boss or not boss.alive then
+    return
+  end
+
+  local image = boss.charred and self.stuffingCharredImage or self.stuffingImage
+  local quads = boss.charred and self.stuffingCharredQuads or self.stuffingQuads
+  local frameIndex = 0
+  if boss.suctioning then
+    local cycle = math.floor((boss.animationTime * 9) % 3)
+    frameIndex = 2 + cycle
+  elseif math.floor(boss.animationTime * 2) % 6 == 0 then
+    frameIndex = 1
+  end
+
+  local scale = 4
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(
+    image,
+    quads[frameIndex],
+    math.floor(boss.x - camera.x),
+    math.floor(boss.y - camera.y),
+    0,
+    scale,
+    scale,
+    32,
+    32
+  )
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function Renderer:drawGeometric(boss, camera)
@@ -616,6 +712,19 @@ function Renderer:drawBossIntro(bossType, progress)
     love.graphics.setColor(1, 1, 1, alpha)
     love.graphics.draw(
       self.geometricPortrait,
+      math.floor(bossPortraitX),
+      math.floor(centerY - 96),
+      0,
+      4,
+      4
+    )
+  elseif bossType == 'stuffing' then
+    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
+    love.graphics.setFont(self.bigFont)
+    love.graphics.printf('THE STUFFING', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
+    love.graphics.setColor(1, 1, 1, alpha)
+    love.graphics.draw(
+      self.stuffingPortrait,
       math.floor(bossPortraitX),
       math.floor(centerY - 96),
       0,

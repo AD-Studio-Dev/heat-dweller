@@ -6,11 +6,14 @@ local Items = require('items')
 local Player = require('player')
 local Renderer = require('renderer')
 local Enemy = require('enemy')
+local Scar = require('scar')
 local Spider = require('spider')
 local Fly = require('fly')
+local Centipede = require('centipede')
 local Crawler = require('crawler')
 local LilSnake = require('lil_snake')
 local TheGeometric = require('the_geometric')
+local TheStuffing = require('the_stuffing')
 local BabyWidow = require('baby_widow')
 local AcidProjectile = require('acid_projectile')
 local SweatProjectile = require('sweat_projectile')
@@ -52,10 +55,10 @@ local menuMusicFade
 local menuMusicActive
 local updateMainMenuMusic
 local backgroundMusic
-local basementGuitarMusic
 local basementOscMusic
-local activeBasementGuitar
 local basementMusicFade
+local kitchenMusic
+local kitchenMusicFade
 local floorTransitionSound
 local bossIntroMusic
 local bossActiveStartMusic
@@ -77,6 +80,7 @@ local gameState
 local crawler
 local lilSnake
 local geometric
+local stuffing
 local babyWidow
 local acidProjectiles
 local sweatProjectiles = {}
@@ -124,6 +128,7 @@ local debugBosses = {
   { name = 'The Crawler', type = 'crawler', floorIndex = 1 },
   { name = "Lil' Snake", type = 'lilsnake', floorIndex = 2 },
   { name = 'The Geometric', type = 'geometric', floorIndex = 3 },
+  { name = 'The Stuffing', type = 'stuffing', floorIndex = 4 },
 }
 local characters = {
   {
@@ -224,10 +229,8 @@ local function setAudioSettings(musicVolume, sfxVolume, shakeEnabled)
   if bossIntroMusic then bossIntroMusic:setVolume(audioMusicVolume) end
   if bossActiveStartMusic then bossActiveStartMusic:setVolume(audioMusicVolume) end
   if bossLoopMusic then bossLoopMusic:setVolume(audioMusicVolume) end
-  for _, source in ipairs(basementGuitarMusic or {}) do
-    source:setVolume(audioMusicVolume)
-  end
   if basementOscMusic then basementOscMusic:setVolume(audioMusicVolume) end
+  if kitchenMusic then kitchenMusic:setVolume(audioMusicVolume) end
   profile.musicVolume = audioMusicVolume
   profile.sfxVolume = audioSfxVolume
   profile.screenShakeEnabled = screenShakeEnabled
@@ -382,6 +385,7 @@ local function resetPlayerRunState()
   crawler = nil
   lilSnake = nil
   geometric = nil
+  stuffing = nil
   babyWidow = nil
   acidProjectiles = {}
   activeFireZones = {}
@@ -473,17 +477,14 @@ local function initializeAudio()
   menuMusic:setVolume(0)
   menuMusic:stop()
   menuMusicActive = false
-  basementGuitarMusic = {
-    love.audio.newSource('resources/music/music/basement/basementguitarvariant1.ogg', 'stream'),
-    love.audio.newSource('resources/music/music/basement/basementguitarvariant2.ogg', 'stream'),
-  }
-  for _, source in ipairs(basementGuitarMusic) do
-    source:setLooping(true)
-    source:setVolume(0)
-  end
-  basementOscMusic = love.audio.newSource('resources/music/music/basement/basementosc.ogg', 'stream')
+  basementOscMusic = love.audio.newSource('resources/music/music/basement/basementsong.ogg', 'stream')
   basementOscMusic:setLooping(true)
   basementOscMusic:setVolume(0)
+  basementOscMusic:stop()
+  kitchenMusic = love.audio.newSource('resources/music/music/kitchen/kitchensong.ogg', 'stream')
+  kitchenMusic:setLooping(true)
+  kitchenMusic:setVolume(0)
+  kitchenMusic:stop()
   bossIntroMusic = love.audio.newSource('resources/music/music/bossfightstart.ogg', 'stream')
   bossIntroMusic:setLooping(false)
   bossIntroMusic:setVolume(audioMusicVolume)
@@ -571,6 +572,7 @@ function love.load()
   crawler = nil
   lilSnake = nil
   geometric = nil
+  stuffing = nil
   babyWidow = nil
   acidProjectiles = {}
   screenShakeTime = 0
@@ -717,6 +719,10 @@ saveRun = function()
     'spiderSpawnTimer', 'attackCooldown', 'attackWindup',
     'aggravated',
   }
+  local stuffingFields = {
+    'x', 'y', 'health', 'maxHealth', 'alive', 'phase', 'animationTime',
+    'suctioning', 'pullStrength', 'projectileTimer', 'charred', 'stateTimer',
+  }
   local enemyFields = {
     'kind', 'x', 'y', 'health', 'alive', 'speed', 'aggravated',
     'animationTime', 'attackCooldown', 'state',
@@ -770,6 +776,7 @@ saveRun = function()
     crawler = saveEntity(crawler, bossFields),
     lilSnake = saveEntity(lilSnake, snakeFields),
     geometric = saveEntity(geometric, geometricFields),
+    stuffing = saveEntity(stuffing, stuffingFields),
     lilSnakeTrail = lilSnake and copySaveData(lilSnake.trail) or nil,
     babyWidow = saveEntity(babyWidow, minionFields),
     acidProjectiles = {},
@@ -910,6 +917,7 @@ continueRun = function()
   restoreEntity(crawler, snapshot.crawler)
   restoreEntity(lilSnake, snapshot.lilSnake)
   restoreEntity(geometric, snapshot.geometric)
+  restoreEntity(stuffing, snapshot.stuffing)
   if geometric then
     geometric:restoreRuntimeState()
     geometric.onScreenShake = function(strength)
@@ -961,18 +969,24 @@ continueRun = function()
   gameState = 'playing'
   if currentRoom.boss and not bossDefeated then
     stopBasementMusic(false)
+    stopKitchenMusic(false)
     backgroundMusic:stop()
     bossMusicPhase = 'loop'
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
     bossLoopMusic:play()
+  elseif world.floorType == 'kitchen' then
+    stopBasementMusic(false)
+    startKitchenMusic()
   elseif world.floorType ~= 'basement' then
     stopBasementMusic(false)
+    stopKitchenMusic(false)
     backgroundMusic:play()
   else
+    stopKitchenMusic(false)
     startBasementMusic()
   end
-  renderer:updateBossHealth(crawler or lilSnake or geometric, 0)
+  renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing, 0)
   mainMenu.hasSave = true
   mainMenu.message = nil
   return true
@@ -990,7 +1004,7 @@ local function updateSweatCombat(dt, targets)
     player.stats.damage * 0.2
   )
   for _, target in ipairs(defeated) do
-    if target == crawler or target == lilSnake or target == geometric then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -1031,6 +1045,7 @@ function love.update(dt)
     return
   end
   updateBasementMusicFade(dt)
+  updateKitchenMusicFade(dt)
   if gameState == 'title' then
     mainMenu:update(dt)
     return
@@ -1143,6 +1158,9 @@ function love.update(dt)
       foamTargets[#foamTargets + 1] = target
     end
   end
+  if stuffing then
+    foamTargets[#foamTargets + 1] = stuffing
+  end
   if babyWidow then
     foamTargets[#foamTargets + 1] = babyWidow
   end
@@ -1159,7 +1177,7 @@ function love.update(dt)
     currentRoom and currentRoom.layout.walls or {}
   )
   for _, defeated in ipairs(foamDeaths) do
-    if defeated == crawler or defeated == lilSnake or defeated == geometric then
+    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing then
       player.stats.dollars = player.stats.dollars + 8
     elseif defeated == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -1177,6 +1195,9 @@ function love.update(dt)
   end
   if geometric then
     geometric:update(dt, player, currentRoom and currentRoom.layout.walls or {})
+  end
+  if stuffing then
+    stuffing:update(dt, player, currentRoom and currentRoom.layout.walls or {})
   end
   if babyWidow then
     local spiderCount = babyWidow:update(dt, player)
@@ -1205,11 +1226,27 @@ function love.update(dt)
     end
   end
   for _, enemy in ipairs(enemies) do
-    enemy:update(dt, player, world)
+    if enemy and type(enemy.update) == 'function' and enemy.alive then
+      local spawned = enemy:update(dt, player, world)
+      if spawned and type(spawned) == 'table' then
+        for _, child in ipairs(spawned) do
+          if child and type(child.update) == 'function' then
+            table.insert(enemies, child)
+          end
+        end
+      end
+    end
+  end
+
+  for index = #enemies, 1, -1 do
+    local enemy = enemies[index]
+    if not enemy or not enemy.alive or type(enemy.update) ~= 'function' then
+      table.remove(enemies, index)
+    end
   end
   updateSweatCombat(dt, foamTargets)
 
-  local activeBoss = crawler or lilSnake or geometric
+  local activeBoss = crawler or lilSnake or geometric or stuffing
   if currentRoom and currentRoom.boss then
     renderer:updateBossHealth(activeBoss, dt)
   else
@@ -1298,6 +1335,7 @@ local function getLivingRoomTargets()
       targets[#targets + 1] = target
     end
   end
+  if stuffing and stuffing.alive then targets[#targets + 1] = stuffing end
   if babyWidow and babyWidow.alive then targets[#targets + 1] = babyWidow end
   return targets
 end
@@ -1312,7 +1350,7 @@ local function damageTarget(target, amount)
       if target == babyWidow and target.onDeath then
         target.onDeath()
       end
-      if target == crawler or target == lilSnake or target == geometric then
+      if target == crawler or target == lilSnake or target == geometric or target == stuffing then
         player.stats.dollars = player.stats.dollars + 8
       elseif target == babyWidow then
         player.stats.dollars = player.stats.dollars + 3
@@ -1331,7 +1369,7 @@ local function damageTarget(target, amount)
     if target == babyWidow and target.onDeath then
       target.onDeath()
     end
-    if target == crawler or target == lilSnake or target == geometric then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -1649,6 +1687,12 @@ function love.draw()
   end
   renderer:drawCrawler(crawler, world.camera)
   renderer:drawGeometric(geometric, world.camera)
+  renderer:drawStuffing(stuffing, world.camera)
+  if stuffing and stuffing.projectiles then
+    for _, projectile in ipairs(stuffing.projectiles) do
+      renderer:drawStuffingProjectile(projectile, world.camera)
+    end
+  end
   renderer:drawBabyWidow(babyWidow, world.camera)
   if lilSnake then
     lilSnake:draw(world.camera)
@@ -1663,7 +1707,7 @@ function love.draw()
   renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
   drawCultistChoiceOverlay()
   if currentRoom and currentRoom.boss then
-    renderer:drawBossHealthBar(crawler or lilSnake or geometric)
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing)
   end
   if pickupNotification then
     renderer:drawPickupNotification(
@@ -2317,6 +2361,7 @@ function areAllRoomEnemiesDefeated()
   return (not crawler or not crawler.alive)
     and (not lilSnake or not lilSnake.alive)
     and (not geometric or not geometric.alive)
+    and (not stuffing or not stuffing.alive)
     and (not babyWidow or not babyWidow.alive)
 end
 
@@ -2331,6 +2376,7 @@ function spawnRoomEnemies(room)
   crawler = nil
   lilSnake = nil
   geometric = nil
+  stuffing = nil
   babyWidow = nil
 
   if room.cleared then
@@ -2339,10 +2385,14 @@ function spawnRoomEnemies(room)
 
   for _, definition in ipairs(room.enemies) do
     local enemy
-    if definition.type == 'spider' then
+    if definition.type == 'scar' then
+      enemy = Scar.new(definition)
+    elseif definition.type == 'spider' then
       enemy = Spider.new(definition)
     elseif definition.type == 'fly' then
       enemy = Fly:new(definition.x, definition.y)
+    elseif definition.type == 'centipede' then
+      enemy = Centipede.new(definition)
     elseif definition.type == 'crawler' then
       crawler = Crawler.new(world)
     elseif definition.type == 'lilsnake' then
@@ -2352,6 +2402,8 @@ function spawnRoomEnemies(room)
     elseif definition.type == 'geometric' then
       geometric = TheGeometric.new(world)
       attachGeometricFeedback(geometric)
+    elseif definition.type == 'stuffing' then
+      stuffing = TheStuffing.new(world)
     else
       enemy = Enemy.new(definition)
     end
@@ -2423,6 +2475,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
 
   if currentRoom.boss and not currentRoom.cleared and not skipBossIntro then
     stopBasementMusic(true)
+    stopKitchenMusic(true)
     backgroundMusic:stop()
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
@@ -2435,6 +2488,15 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
     if currentRoom.boss and currentRoom.cleared and not ladder
         and world.floorIndex < #FLOOR_TYPES then
       ladder = { x = 104, y = world.height - 104 }
+    end
+    if world.floorType == 'kitchen' then
+      startKitchenMusic()
+    elseif world.floorType == 'basement' then
+      startBasementMusic()
+    else
+      stopKitchenMusic(false)
+      stopBasementMusic(false)
+      backgroundMusic:play()
     end
     gameState = 'playing'
   end
@@ -2588,7 +2650,16 @@ function startGame(debugBossType)
     end
     assert(bossRoomIndex, 'Generated floor has no boss room for debug run.')
   end
-  startBasementMusic()
+  if world.floorType == 'kitchen' then
+    startKitchenMusic()
+  elseif world.floorType == 'basement' then
+    startBasementMusic()
+  else
+    stopKitchenMusic(false)
+    stopBasementMusic(false)
+    setFloorMusicVolume()
+    backgroundMusic:play()
+  end
   exploredRooms = {}
   seenRooms = {}
   isPickingUpItem = false
@@ -2700,20 +2771,36 @@ function updateBasementMusicFade(dt)
   local progress = basementMusicFade.elapsed / basementMusicFade.duration
   local volume = (basementMusicFade.from
     + (basementMusicFade.to - basementMusicFade.from) * progress) * audioMusicVolume
-  if activeBasementGuitar then
-    activeBasementGuitar:setVolume(volume)
-  end
   basementOscMusic:setVolume(volume)
 
   if progress >= 1 then
     local stopping = basementMusicFade.to == 0
     basementMusicFade = nil
     if stopping then
-      for _, source in ipairs(basementGuitarMusic) do
-        source:stop()
-      end
       basementOscMusic:stop()
-      activeBasementGuitar = nil
+      basementOscMusic:setVolume(0)
+    end
+  end
+end
+
+function updateKitchenMusicFade(dt)
+  if not kitchenMusicFade then
+    return
+  end
+
+  kitchenMusicFade.elapsed = math.min(kitchenMusicFade.elapsed + dt, kitchenMusicFade.duration)
+  local progress = kitchenMusicFade.elapsed / kitchenMusicFade.duration
+  local volume = (kitchenMusicFade.from + (kitchenMusicFade.to - kitchenMusicFade.from) * progress) * audioMusicVolume
+  if kitchenMusic then
+    kitchenMusic:setVolume(volume)
+  end
+
+  if progress >= 1 then
+    local stopping = kitchenMusicFade.to == 0
+    kitchenMusicFade = nil
+    if stopping and kitchenMusic then
+      kitchenMusic:stop()
+      kitchenMusic:setVolume(0)
     end
   end
 end
@@ -2752,69 +2839,118 @@ updateMainMenuMusic = function(dt)
 end
 
 function startBasementMusic()
-  if activeBasementGuitar then
+  if not basementOscMusic then
     return
   end
 
-  activeBasementGuitar = basementGuitarMusic[math.random(#basementGuitarMusic)]
-  for _, source in ipairs(basementGuitarMusic) do
-    source:stop()
-    source:setVolume(0)
+  if basementOscMusic:isPlaying() then
+    basementMusicFade = nil
+    basementOscMusic:setVolume(audioMusicVolume)
+    return
   end
+
   basementOscMusic:stop()
   basementOscMusic:setVolume(0)
-  activeBasementGuitar:play()
   basementOscMusic:play()
   basementMusicFade = { elapsed = 0, duration = 0.75, from = 0, to = 1 }
 end
 
 function stopBasementMusic(fade)
-  if not activeBasementGuitar then
+  if not basementOscMusic then
     return
   end
 
   if not fade then
-    for _, source in ipairs(basementGuitarMusic) do
-      source:stop()
-      source:setVolume(0)
-    end
     basementOscMusic:stop()
     basementOscMusic:setVolume(0)
-    activeBasementGuitar = nil
     basementMusicFade = nil
     return
   end
 
-  local currentVolume = activeBasementGuitar:getVolume()
+  local currentVolume = basementOscMusic:getVolume()
   if audioMusicVolume > 0 then
     currentVolume = currentVolume / audioMusicVolume
   end
   basementMusicFade = { elapsed = 0, duration = 0.75, from = currentVolume, to = 0 }
 end
 
-function pauseGameAudio()
-  backgroundMusic:pause()
-  bossActiveStartMusic:pause()
-  bossLoopMusic:pause()
-  if activeBasementGuitar then
-    activeBasementGuitar:pause()
-    basementOscMusic:pause()
+function startKitchenMusic()
+  if not kitchenMusic then
+    return
   end
+
+  if kitchenMusic:isPlaying() then
+    kitchenMusicFade = nil
+    kitchenMusic:setVolume(audioMusicVolume)
+    return
+  end
+
+  stopBasementMusic(false)
+  backgroundMusic:stop()
+  kitchenMusic:stop()
+  kitchenMusic:setVolume(0)
+  kitchenMusic:play()
+  kitchenMusicFade = { elapsed = 0, duration = 0.75, from = 0, to = 1 }
+end
+
+function stopKitchenMusic(fade)
+  if not kitchenMusic then
+    return
+  end
+
+  if not fade then
+    kitchenMusic:stop()
+    kitchenMusic:setVolume(0)
+    kitchenMusicFade = nil
+    return
+  end
+
+  local currentVolume = kitchenMusic:getVolume()
+  if audioMusicVolume > 0 then
+    currentVolume = currentVolume / audioMusicVolume
+  end
+  kitchenMusicFade = { elapsed = 0, duration = 0.75, from = currentVolume, to = 0 }
+end
+
+function pauseGameAudio()
+  local function duck(source)
+    if source and source:isPlaying() then
+      source:setVolume(0)
+    end
+  end
+
+  duck(backgroundMusic)
+  duck(bossActiveStartMusic)
+  duck(bossLoopMusic)
+  duck(basementOscMusic)
+  duck(kitchenMusic)
 end
 
 function resumeGameAudio()
+  local function restore(source, targetVolume)
+    if source and targetVolume ~= nil then
+      source:setVolume(targetVolume)
+      if not source:isPlaying() then
+        source:play()
+      end
+    end
+  end
+
   if world.floorType == 'basement' then
-    if not bossDefeated and activeBasementGuitar then
-      activeBasementGuitar:play()
-      basementOscMusic:play()
+    if not bossDefeated then
+      restore(basementOscMusic, audioMusicVolume)
+    end
+  elseif world.floorType == 'kitchen' then
+    if kitchenMusic and not bossDefeated then
+      restore(kitchenMusic, audioMusicVolume)
     end
   else
-    backgroundMusic:play()
+    restore(backgroundMusic, audioMusicVolume * math.min(1, 0.75 + math.max(0, (world and world.floorIndex or 1) - 1) * 0.04))
   end
 end
 
 function resumePausedAudio()
-  local activeBoss = crawler or lilSnake or geometric
+  local activeBoss = crawler or lilSnake or geometric or stuffing
   if currentRoom and currentRoom.boss and activeBoss and activeBoss.alive then
     if bossMusicPhase == 'active_start' then
       bossActiveStartMusic:play()
@@ -2845,6 +2981,7 @@ function transitionToNextFloor()
   end
 
   stopBasementMusic(false)
+  stopKitchenMusic(false)
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
   bossLoopMusic:stop()
@@ -2875,6 +3012,7 @@ loadFloor = function(floorIndex)
   end
 
   stopBasementMusic(false)
+  stopKitchenMusic(false)
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
   bossLoopMusic:stop()
@@ -2901,6 +3039,8 @@ loadFloor = function(floorIndex)
   doorsLocked = true
   if world.floorType == 'basement' then
     startBasementMusic()
+  elseif world.floorType == 'kitchen' then
+    startKitchenMusic()
   else
     setFloorMusicVolume()
     backgroundMusic:play()

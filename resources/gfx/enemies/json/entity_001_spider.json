@@ -19,7 +19,7 @@
  "meta": {
   "app": "https://github.com/LibreSprite/LibreSprite/",
   "version": "1.1-dev",
-  "image": "C:\\Users\\Ahmed\\Documents\\GitHub\\heat-dweller\\resources\\sprites\\enemies\\spider.png",
+  "image": "C:\\Users\\Ahmed\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\enemies\\spritesheets\\entity_001_spider.png",
   "format": "RGBA8888",
   "size": { "w": 128, "h": 64 },
   "scale": "1",
