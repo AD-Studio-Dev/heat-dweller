@@ -75,6 +75,8 @@ local autosaveTimer
 local exploredRooms
 local seenRooms
 local ladder
+local ladderImage
+local bossDeathParticles = {}
 local doorsLocked
 local gameState
 local crawler
@@ -114,6 +116,7 @@ local pickupNotificationElapsed
 local pickupNotificationDuration = 3.4
 local matthewHurtSounds
 local babyWidowSounds
+local bossDefeatSound
 local shopOffers
 local cultistOffer
 local cultistChoiceActive
@@ -134,12 +137,14 @@ local characters = {
   {
     name = 'Matthew',
     subtitle = 'The determined dweller',
+    isUnlocked = true,
     imagePath = 'resources/sprites/characters/character_001_matthew.png',
     spriteSheetPath = 'resources/gfx/characters/character_001_matthew.png',
   },
   {
     name = 'Stella',
     subtitle = 'The bright survivor',
+    isUnlocked = false,
     imagePath = 'resources/sprites/characters/character_002_stella.png',
   },
 }
@@ -330,6 +335,22 @@ local function createMenuTone(startFrequency, endFrequency, duration)
   return registerSfxSource(love.audio.newSource(soundData, 'static'))
 end
 
+local function createBossDefeatTone()
+  local sampleRate = 22050
+  local sampleCount = math.floor(sampleRate * 0.8)
+  local soundData = love.sound.newSoundData(sampleCount, sampleRate, 16, 1)
+
+  for sample = 0, sampleCount - 1 do
+    local progress = sample / sampleCount
+    local frequency = 180 - (180 * progress)
+    local envelope = math.max(0, 1 - progress)
+    local value = math.sin(2 * math.pi * frequency * sample / sampleRate) * envelope * 0.46
+    soundData:setSample(sample, 1, value)
+  end
+
+  return registerSfxSource(love.audio.newSource(soundData, 'static'))
+end
+
 local function updateCameraSize()
   world.camera.width = love.graphics.getWidth()
   world.camera.height = love.graphics.getHeight()
@@ -395,6 +416,7 @@ local function resetPlayerRunState()
   exploredRooms = {}
   seenRooms = {}
   ladder = nil
+  bossDeathParticles = {}
   doorsLocked = true
   roomRewardSpawned = false
   bossDefeated = false
@@ -494,6 +516,7 @@ local function initializeAudio()
   bossLoopMusic = love.audio.newSource('resources/music/music/bossfightactiveloop.ogg', 'stream')
   bossLoopMusic:setLooping(true)
   bossLoopMusic:setVolume(audioMusicVolume)
+  bossDefeatSound = createBossDefeatTone()
   local floorTransitionPaths = {
     'resources/music/music/floor transition.wav',
     'resources/music/sfx/floor transition.wav',
@@ -517,6 +540,8 @@ local function initializeMenu()
   end
   Atlas:load()
   Fly.load()
+  ladderImage = love.graphics.newImage('resources/gfx/ui/stage/climbingladder.png')
+  ladderImage:setFilter('nearest', 'nearest')
   renderer = Renderer.new(Atlas)
   menuSwitchSound = createMenuTone(1050, 760, 0.065)
   menuSelectSound = createMenuTone(620, 980, 0.11)
@@ -568,6 +593,7 @@ function love.load()
   exploredRooms = {}
   seenRooms = {}
   ladder = nil
+  bossDeathParticles = {}
   doorsLocked = true
   crawler = nil
   lilSnake = nil
@@ -1252,16 +1278,17 @@ function love.update(dt)
   else
     renderer:updateBossHealth(nil, dt)
   end
-  if currentRoom and currentRoom.boss and activeBoss and not activeBoss.alive and not bossDefeated then
-    bossLoopMusic:stop()
-    bossActiveStartMusic:stop()
-    bossMusicPhase = nil
-    backgroundMusic:stop()
-    bossDefeated = true
-    profile.bossesDefeated = profile.bossesDefeated + 1
-    saveProfile()
-    refreshMenuExtras()
-    currentRoom.dealUnlocked = true
+
+  if activeBoss and not activeBoss.alive then
+    if startBossDeathSequence and not activeBoss.deathSequence then
+      startBossDeathSequence(activeBoss)
+    elseif activeBoss.deathSequence then
+      updateBossDeathSequence(dt, activeBoss)
+    end
+  end
+
+  if updateBossDeathParticles then
+    updateBossDeathParticles(dt)
   end
 
   if doorsLocked and areAllRoomEnemiesDefeated() then
@@ -1271,11 +1298,11 @@ function love.update(dt)
       door.locked = false
     end
     if currentRoom.boss and not ladder and world.floorIndex < #FLOOR_TYPES then
-      ladder = { x = 104, y = world.height - 104 }
+      ladder = { x = 104, y = 104 }
     end
   end
 
-  if currentRoom and currentRoom.boss and activeBoss and not activeBoss.alive and not roomRewardSpawned then
+  if currentRoom and currentRoom.boss and currentRoom.dealUnlocked and not roomRewardSpawned then
     items:spawnFloorReward(world.width / 2, world.height / 2)
     roomRewardSpawned = true
   end
@@ -2335,9 +2362,28 @@ function drawWorld()
 end
 
 function drawLadder()
-  -- TODO: Replace this placeholder with the final ladder art asset.
+  if not ladder then
+    return
+  end
+
   local x = ladder.x
   local y = ladder.y
+  if ladderImage then
+    local imageScale = 1.7
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(
+      ladderImage,
+      math.floor(x),
+      math.floor(y),
+      0,
+      imageScale,
+      imageScale,
+      ladderImage:getWidth() / 2,
+      ladderImage:getHeight() / 2
+    )
+    return
+  end
+
   love.graphics.setColor(0.08, 0.055, 0.04, 0.45)
   love.graphics.ellipse('fill', x, y + 26, 34, 10)
   love.graphics.setColor(0.58, 0.39, 0.2, 1)
@@ -2349,6 +2395,130 @@ function drawLadder()
     love.graphics.line(x - 22, y + rung, x + 22, y + rung)
   end
   love.graphics.setLineWidth(1)
+end
+
+local function spawnBossDeathParticles(boss)
+  local particleCount = 32
+  for _ = 1, particleCount do
+    local radius = 12
+    bossDeathParticles[#bossDeathParticles + 1] = {
+      x = boss.x + math.random(-radius, radius),
+      y = boss.y + math.random(-radius, radius),
+      vx = math.random(-160, 160),
+      vy = math.random(-190, 40),
+      radius = math.random(2, 6),
+      life = 0.9 + math.random() * 0.8,
+      maxLife = 1.7,
+      color = {
+        1,
+        0.46 + math.random() * 0.35,
+        0.1 + math.random() * 0.18,
+      },
+    }
+  end
+end
+
+local function startBossDeathSequence(boss)
+  if not boss or boss.deathSequence then
+    return
+  end
+
+  boss.deathSequence = {
+    duration = 1.8,
+    timer = 1.8,
+    particles = {},
+    explosion = 0,
+  }
+  bossDeathParticles = {}
+  spawnBossDeathParticles(boss)
+  bossDefeated = true
+  profile.bossesDefeated = profile.bossesDefeated + 1
+  saveProfile()
+  refreshMenuExtras()
+  bossLoopMusic:stop()
+  bossActiveStartMusic:stop()
+  bossMusicPhase = nil
+  backgroundMusic:stop()
+  if bossDefeatSound then
+    bossDefeatSound:stop()
+    bossDefeatSound:play()
+  end
+  triggerScreenShake(14)
+end
+
+function updateBossDeathParticles(dt)
+  if not bossDeathParticles then
+    bossDeathParticles = {}
+    return
+  end
+
+  for index = #bossDeathParticles, 1, -1 do
+    local particle = bossDeathParticles[index]
+    if particle then
+      particle.x = particle.x + (particle.vx or 0) * dt
+      particle.y = particle.y + (particle.vy or 0) * dt
+      particle.vy = (particle.vy or 0) + 120 * dt
+      particle.life = (particle.life or 0) - dt
+      if particle.life <= 0 then
+        table.remove(bossDeathParticles, index)
+      end
+    else
+      table.remove(bossDeathParticles, index)
+    end
+  end
+
+  if screenShakeTime and screenShakeTime > 0 then
+    screenShakeTime = math.max(0, screenShakeTime - dt)
+  end
+end
+
+local function updateBossDeathSequence(dt, boss)
+  if not boss or not boss.deathSequence then
+    return
+  end
+
+  local sequence = boss.deathSequence
+  sequence.timer = math.max(0, sequence.timer - dt)
+  sequence.explosion = math.min(1, (1.8 - sequence.timer) / 1.8)
+
+  if sequence.timer <= 0 then
+    if not sequence.finished then
+      sequence.finished = true
+      if crawler == boss then
+        crawler = nil
+      elseif lilSnake == boss then
+        lilSnake = nil
+      elseif geometric == boss then
+        geometric = nil
+      elseif stuffing == boss then
+        stuffing = nil
+      end
+      if currentRoom and currentRoom.boss and not ladder and world.floorIndex < #FLOOR_TYPES then
+        ladder = { x = 104, y = 104 }
+      end
+      if currentRoom then
+        currentRoom.dealUnlocked = true
+        currentRoom.cleared = true
+        local doorLocked = false
+        if currentRoom.doors then
+          for _, door in pairs(currentRoom.doors) do
+            door.locked = false
+          end
+        end
+        if currentRoom.boss and not roomRewardSpawned then
+          items:spawnFloorReward(world.width / 2, world.height / 2)
+          roomRewardSpawned = true
+        end
+      end
+    end
+    return
+  end
+
+  bossDeathParticles = bossDeathParticles or {}
+  for _, particle in ipairs(bossDeathParticles) do
+    particle.x = particle.x + (math.random() - 0.5) * 18 * dt
+    particle.y = particle.y + (math.random() - 0.5) * 18 * dt
+  end
 end
 
 function areAllRoomEnemiesDefeated()
@@ -2487,7 +2657,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   else
     if currentRoom.boss and currentRoom.cleared and not ladder
         and world.floorIndex < #FLOOR_TYPES then
-      ladder = { x = 104, y = world.height - 104 }
+      ladder = { x = 104, y = 104 }
     end
     if world.floorType == 'kitchen' then
       startKitchenMusic()
@@ -2607,10 +2777,18 @@ end
 function changeCharacter(direction)
   characterIndex = (characterIndex - 1 + direction) % #characters + 1
   selectedCharacter = characters[characterIndex]
-  characterCarouselTarget = characterCarouselTarget + direction
+  characterCarouselTarget = characterIndex
 end
 
 function startGame(debugBossType)
+  if selectedCharacter and selectedCharacter.isUnlocked == false then
+    if menuSelectSound then
+      menuSelectSound:stop()
+      menuSelectSound:play()
+    end
+    return false
+  end
+
   local saveCleared, clearError = clearSavedRun()
   if not saveCleared then
     mainMenu.message = clearError
@@ -2806,7 +2984,7 @@ function updateKitchenMusicFade(dt)
 end
 
 updateMainMenuMusic = function(dt)
-  local shouldPlay = gameState == 'title'
+  local shouldPlay = gameState == 'title' or gameState == 'character_select'
   if shouldPlay ~= menuMusicActive then
     menuMusicActive = shouldPlay
     local currentVolume = menuMusic:getVolume()
@@ -3035,6 +3213,7 @@ loadFloor = function(floorIndex)
   babyWidow = nil
   acidProjectiles = {}
   ladder = nil
+  bossDeathParticles = {}
   roomRewardSpawned = false
   doorsLocked = true
   if world.floorType == 'basement' then
@@ -3159,6 +3338,23 @@ function drawSpecialRoomContents()
     else
       love.graphics.printf('Choose a card: E', screenX - 100, screenY + 62, 200, 'center')
     end
+  end
+
+  local activeBoss = crawler or lilSnake or geometric or stuffing
+  if activeBoss and activeBoss.deathSequence then
+    local progress = 1 - activeBoss.deathSequence.timer / activeBoss.deathSequence.duration
+    local radius = 18 + progress * 110
+    love.graphics.setColor(1, 0.52 + progress * 0.46, 0.1, 0.8 - progress * 0.7)
+    love.graphics.circle('line', math.floor(activeBoss.x - world.camera.x), math.floor(activeBoss.y - world.camera.y), radius)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+
+  if #bossDeathParticles > 0 then
+    for _, particle in ipairs(bossDeathParticles) do
+      love.graphics.setColor(particle.color[1], particle.color[2], particle.color[3], math.max(0, particle.life / particle.maxLife))
+      love.graphics.circle('fill', math.floor(particle.x - world.camera.x), math.floor(particle.y - world.camera.y), particle.radius)
+    end
+    love.graphics.setColor(1, 1, 1, 1)
   end
 
   if currentRoom and currentRoom.shop then

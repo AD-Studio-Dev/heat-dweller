@@ -30,6 +30,8 @@ function Crawler.new(world)
     pathIndex = 1,
     x = points[1].x,
     y = points[1].y,
+    lastX = points[1].x,
+    lastY = points[1].y,
     speed = 110,
     width = 96,
     height = 96,
@@ -91,6 +93,7 @@ function Crawler:update(dt)
   end
   local speedScale = Wet.update(self, dt)
 
+  self.lastX, self.lastY = self.x, self.y
   self.animationTime = self.animationTime + dt
   self.babySpawnTimer = self.babySpawnTimer + dt
   local shouldSummonBaby = false

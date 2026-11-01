@@ -28,6 +28,7 @@ function BabyWidow.new(world, config)
     aggravated = false,
     animationTime = 0,
     spiderSpawnTimer = 0,
+    spiderSpawnCooldown = config.spiderSpawnCooldown or 10,
     attackCooldown = config.attackCooldown or 3.5,
     attackWindup = 0,
     attackWindupDuration = 0.65,
@@ -70,8 +71,8 @@ function BabyWidow:update(dt, player)
 
   self.spiderSpawnTimer = self.spiderSpawnTimer + dt
   local spawnedCount = 0
-  while self.spiderSpawnTimer >= 2 do
-    self.spiderSpawnTimer = self.spiderSpawnTimer - 2
+  while self.spiderSpawnTimer >= (self.spiderSpawnCooldown or 10) do
+    self.spiderSpawnTimer = self.spiderSpawnTimer - (self.spiderSpawnCooldown or 10)
     spawnedCount = spawnedCount + 1
   end
 

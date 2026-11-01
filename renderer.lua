@@ -14,6 +14,14 @@ local geometricFrameIndices = {
   bodyWalkAlt = 5,
 }
 
+local function getBossDrawOffset(boss)
+  if not boss or not boss.deathSequence then
+    return 0, 0
+  end
+
+  return math.random(-4, 4), math.random(-4, 4)
+end
+
 local function formatStat(value)
   if value % 1 == 0 then
     return string.format('%d', value)
@@ -37,6 +45,8 @@ function Renderer.new(atlas)
   renderer.stuffingProjectileImage = love.graphics.newImage('resources/sprites/attack/thestuffing_attack.png')
   renderer.sweatImage = love.graphics.newImage('resources/sprites/attack/sweatattack.png')
   renderer.sweatSplashImage = love.graphics.newImage('resources/sprites/attack/sweat_splash.png')
+  renderer.missingUnknownImage = love.graphics.newImage('resources/sprites/characters/missingunknown.png')
+  renderer.missingUnknownImage:setFilter('nearest', 'nearest')
   renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
   renderer.sweatSplashImage:setFilter('nearest', 'nearest')
@@ -229,39 +239,53 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
   local centerX = width / 2
   local cardWidth = math.min(440, width * 0.52)
   local cardHeight = math.min(450, height * 0.62)
-  local cardTop = (height - cardHeight) / 2 + 12
-  local slotWidth = math.min(330, width * 0.32)
-  local copies = math.ceil(2 / #characters) + 1
+  local slotWidth = math.min(330, width * 0.28)
   local visibleCards = {}
+  local characterCount = #characters
+
+  if characterCount == 0 then
+    return
+  end
 
   for characterIndex, character in ipairs(characters) do
-    for copy = -copies, copies do
-      local virtualIndex = characterIndex + copy * #characters
-      local offset = virtualIndex - carouselPosition
-      if math.abs(offset) < 2.1 then
-        visibleCards[#visibleCards + 1] = {
-          character = character,
-          offset = offset,
-          focused = math.abs(offset) < 0.5,
-        }
-      end
+    local offset = characterIndex - carouselPosition
+    while offset > characterCount / 2 do
+      offset = offset - characterCount
+    end
+    while offset < -characterCount / 2 do
+      offset = offset + characterCount
+    end
+
+    if math.abs(offset) <= 2.1 then
+      visibleCards[#visibleCards + 1] = {
+        character = character,
+        offset = offset,
+        index = characterIndex,
+        focused = math.abs(offset) < 0.5,
+      }
     end
   end
 
   table.sort(visibleCards, function(left, right)
-    return math.abs(left.offset) > math.abs(right.offset)
+    return left.offset < right.offset
   end)
 
   for _, card in ipairs(visibleCards) do
     local character = card.character
     local focused = card.focused
-    local cardCenterX = centerX + card.offset * slotWidth
-    local scale = focused and 1 or 0.78
-    local alpha = focused and 1 or math.max(0.32, 0.66 - math.abs(card.offset) * 0.12)
+    local offset = card.offset
+    local distance = math.abs(offset)
+    local scale = 1 - math.min(0.7, distance * 0.24)
+    local alpha = 1 - math.min(0.72, distance * 0.22)
     local currentCardWidth = cardWidth * scale
     local currentCardHeight = cardHeight * scale
+    local cardCenterX = centerX + offset * slotWidth
     local cardX = math.floor(cardCenterX - currentCardWidth / 2)
     local cardY = math.floor((height - currentCardHeight) / 2 + 12)
+    local isUnlocked = character.isUnlocked ~= false and character.name == 'Matthew'
+    local isMatthewSelected = isUnlocked and focused
+    local displayName = isMatthewSelected and 'Matthew' or '?'
+    local portraitImage = isUnlocked and (character.image or self.missingUnknownImage) or self.missingUnknownImage
 
     love.graphics.setColor(0.025, 0.018, 0.016, 0.88 * alpha)
     love.graphics.rectangle('fill', cardX, cardY, currentCardWidth, currentCardHeight, 6, 6)
@@ -277,43 +301,45 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
     love.graphics.setColor(0.96, 0.84, 0.63, alpha)
     love.graphics.setFont(focused and self.bigFont or self.smallFont)
     love.graphics.printf(
-      character.name,
+      displayName,
       cardX + 12,
       cardY + 18,
       currentCardWidth - 24,
       'center'
     )
 
-    local image = character.image
-    image:setFilter('nearest', 'nearest')
-    local imageWidth, imageHeight = image:getDimensions()
-    local imageScale = focused and math.min(
-      4,
-      currentCardWidth * 0.34 / imageWidth,
-      currentCardHeight * 0.36 / imageHeight
-    ) or math.min(
-      2.8,
-      currentCardWidth * 0.32 / imageWidth,
-      currentCardHeight * 0.3 / imageHeight
-    )
-    local imageCenterY = focused and cardY + currentCardHeight * 0.31
-      or cardY + currentCardHeight * 0.44
-    love.graphics.setColor(focused and 1 or 0.52, focused and 1 or 0.52, focused and 1 or 0.52, alpha)
-    love.graphics.draw(
-      image,
-      math.floor(cardCenterX),
-      math.floor(imageCenterY),
-      0,
-      imageScale,
-      imageScale,
-      imageWidth / 2,
-      imageHeight / 2
-    )
+    local image = portraitImage
+    if image then
+      image:setFilter('nearest', 'nearest')
+      local imageWidth, imageHeight = image:getDimensions()
+      local imageScale = focused and math.min(
+        4,
+        currentCardWidth * 0.34 / imageWidth,
+        currentCardHeight * 0.36 / imageHeight
+      ) or math.min(
+        2.8,
+        currentCardWidth * 0.32 / imageWidth,
+        currentCardHeight * 0.3 / imageHeight
+      )
+      local imageCenterY = focused and cardY + currentCardHeight * 0.31
+        or cardY + currentCardHeight * 0.44
+      love.graphics.setColor(focused and 1 or 0.52, focused and 1 or 0.52, focused and 1 or 0.52, alpha)
+      love.graphics.draw(
+        image,
+        math.floor(cardCenterX),
+        math.floor(imageCenterY),
+        0,
+        imageScale,
+        imageScale,
+        imageWidth / 2,
+        imageHeight / 2
+      )
+    end
 
     if focused then
       love.graphics.setColor(0.72, 0.56, 0.39, 1)
       love.graphics.setFont(self.smallFont)
-      love.graphics.printf(character.subtitle, cardX + 12, cardY + currentCardHeight * 0.49,
+      love.graphics.printf(character.subtitle or '', cardX + 12, cardY + currentCardHeight * 0.49,
         currentCardWidth - 24, 'center')
       love.graphics.setColor(0.98, 0.49, 0.16, 0.75)
       love.graphics.rectangle(
@@ -325,22 +351,53 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
       )
 
       local stats = {
-        { 'Damage', '20' },
-        { 'Speed', '350' },
-        { 'Attack Rate', '2.9 / sec' },
-        { 'Range', '540' },
-        { 'Health', '100' },
+        { key = 'health', value = tostring(math.max(1, math.ceil(100 / 20))), image = self.heartsImage, quad = self.heartQuads.full },
+        { key = 'speed', value = tostring(350), image = self.statImages.speed },
+        { key = 'damage', value = tostring(20), image = self.statImages.damage },
+        { key = 'range', value = tostring(540), image = self.statImages.range },
+        { key = 'attackSpeed', value = '2.9', image = self.statImages.attackSpeed },
       }
-      local statsY = cardY + currentCardHeight * 0.59
-      local rowHeight = math.min(25, currentCardHeight * 0.055)
-      love.graphics.setFont(rowHeight >= self.hudFont:getHeight() + 2 and self.hudFont or self.smallFont)
-      for index, stat in ipairs(stats) do
-        local rowY = statsY + (index - 1) * rowHeight
-        love.graphics.setColor(0.83, 0.76, 0.65, 1)
-        love.graphics.print(stat[1], cardX + 28, rowY)
+      local statIconSize = 18
+      local statGap = 10
+      local statTextGap = 8
+      local statsX = cardX + currentCardWidth * 0.12
+      local statsY = cardY + currentCardHeight * 0.6
+      local rowWidth = 0
+      local rowEntries = {}
+
+      for _, stat in ipairs(stats) do
+        local valueText = tostring(stat.value)
+        rowEntries[#rowEntries + 1] = {
+          image = stat.image,
+          value = valueText,
+          quad = stat.quad,
+          width = statIconSize + statTextGap + self.smallFont:getWidth(valueText),
+        }
+        rowWidth = rowWidth + statIconSize + statTextGap + self.smallFont:getWidth(valueText) + statGap
+      end
+
+      local dividerY = cardY + currentCardHeight * 0.57
+      love.graphics.setColor(0.95, 0.58, 0.18, 0.5)
+      love.graphics.rectangle(
+        'fill',
+        cardX + currentCardWidth * 0.1,
+        dividerY,
+        currentCardWidth * 0.8,
+        1.5
+      )
+
+      local x = statsX
+      local y = statsY + 4
+      for _, stat in ipairs(rowEntries) do
+        love.graphics.setColor(1, 1, 1, 1)
+        if stat.quad then
+          love.graphics.draw(stat.image, stat.quad, math.floor(x), math.floor(y), 0, 1, 1)
+        else
+          love.graphics.draw(stat.image, math.floor(x), math.floor(y), 0, 1, 1)
+        end
         love.graphics.setColor(1, 0.79, 0.42, 1)
-        love.graphics.printf(stat[2], cardX + currentCardWidth * 0.52, rowY,
-          currentCardWidth * 0.4 - 24, 'right')
+        love.graphics.print(stat.value, math.floor(x + statIconSize + statTextGap), math.floor(y + 1))
+        x = x + stat.width + statGap
       end
     end
   end
@@ -408,16 +465,25 @@ function Renderer:drawEnemy(enemy, camera)
 
   if enemy.kind == 'centipede' then
     local scale = (enemy.scale or 1) * 2
+    local dx = enemy.vx or 0
+    local dy = enemy.vy or 0
+    if dx == 0 and dy == 0 then
+      dx, dy = 0, 1
+    end
+    local angle = math.atan2(dy, dx) - math.pi / 2
+    local sourceWidth = self.centipedeImage:getWidth() or 32
+    local sourceHeight = self.centipedeImage:getHeight() or 32
+
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(
       self.centipedeImage,
       math.floor(enemy.x - camera.x),
       math.floor(enemy.y - camera.y),
-      0,
+      angle,
       scale,
       scale,
-      (self.centipedeImage:getWidth() or 32) / 2,
-      (self.centipedeImage:getHeight() or 32) / 2
+      sourceWidth / 2,
+      sourceHeight / 2
     )
     return
   end
@@ -453,6 +519,26 @@ function Renderer:drawCrawler(crawler, camera)
     return
   end
 
+  local shakeX, shakeY = getBossDrawOffset(crawler)
+  local dx = (crawler.x or 0) - (crawler.lastX or crawler.x or 0)
+  local dy = (crawler.y or 0) - (crawler.lastY or crawler.y or 0)
+  local scaleX = 1
+  local scaleY = 1
+  local baseFrame = math.floor(crawler.animationTime / 0.1) % 2 + 1
+  local frameIndex = baseFrame
+
+  if math.abs(dx) >= math.abs(dy) then
+    if dx > 0 then
+      scaleX = -1
+    end
+    frameIndex = baseFrame
+  else
+    frameIndex = 2 + baseFrame
+    if dy > 0 then
+      scaleY = -1
+    end
+  end
+
   local scale = 3
   if crawler.phaseState == 'rage_pause' then
     love.graphics.setColor(1, 0.28, 0.12, 1)
@@ -470,7 +556,18 @@ function Renderer:drawCrawler(crawler, camera)
   else
     love.graphics.setColor(1, 1, 1, 1)
   end
-  love.graphics.draw(self.crawlerImage, self.crawlerQuads[crawler:getFrame()], math.floor(crawler.x - camera.x), math.floor(crawler.y - camera.y), 0, scale, scale, 48, 48)
+
+  love.graphics.draw(
+    self.crawlerImage,
+    self.crawlerQuads[frameIndex],
+    math.floor(crawler.x - camera.x + shakeX),
+    math.floor(crawler.y - camera.y + shakeY),
+    0,
+    scale * scaleX,
+    scale * scaleY,
+    48,
+    48
+  )
   love.graphics.setColor(1, 1, 1, 1)
 end
 
@@ -517,6 +614,7 @@ function Renderer:drawStuffing(boss, camera)
     return
   end
 
+  local shakeX, shakeY = getBossDrawOffset(boss)
   local image = boss.charred and self.stuffingCharredImage or self.stuffingImage
   local quads = boss.charred and self.stuffingCharredQuads or self.stuffingQuads
   local frameIndex = 0
@@ -532,8 +630,8 @@ function Renderer:drawStuffing(boss, camera)
   love.graphics.draw(
     image,
     quads[frameIndex],
-    math.floor(boss.x - camera.x),
-    math.floor(boss.y - camera.y),
+    math.floor(boss.x - camera.x + shakeX),
+    math.floor(boss.y - camera.y + shakeY),
     0,
     scale,
     scale,
@@ -548,6 +646,7 @@ function Renderer:drawGeometric(boss, camera)
     return
   end
 
+  local shakeX, shakeY = getBossDrawOffset(boss)
   local frame = geometricFrameIndices[boss:getFrame()]
   if boss.phase == 'final' then
     local scaleX = boss.finalVx < 0 and -4 or 4
@@ -555,8 +654,8 @@ function Renderer:drawGeometric(boss, camera)
     love.graphics.draw(
       self.geometricImage,
       self.geometricQuads[frame],
-      math.floor(boss.x - camera.x),
-      math.floor(boss.y - camera.y),
+      math.floor(boss.x - camera.x + shakeX),
+      math.floor(boss.y - camera.y + shakeY),
       0,
       scaleX,
       4,
@@ -578,8 +677,8 @@ function Renderer:drawGeometric(boss, camera)
     love.graphics.draw(
       self.geometricImage,
       self.geometricQuads[frame],
-      math.floor(boss.x - camera.x),
-      math.floor(boss.y - camera.y),
+      math.floor(boss.x - camera.x + shakeX),
+      math.floor(boss.y - camera.y + shakeY),
       0,
       scaleX,
       3.5,
@@ -614,8 +713,8 @@ function Renderer:drawGeometric(boss, camera)
       love.graphics.draw(
         self.geometricImage,
         self.geometricQuads[headFrame],
-        math.floor(head.x - camera.x),
-        math.floor(head.y - camera.y),
+        math.floor(head.x - camera.x + shakeX),
+        math.floor(head.y - camera.y + shakeY),
         0,
         head.facing == 'left' and -2 or 2,
         2,
@@ -633,14 +732,14 @@ function Renderer:drawGeometric(boss, camera)
     love.graphics.setLineWidth(3)
     love.graphics.circle(
       'line',
-      math.floor(shatter.x - camera.x),
-      math.floor(shatter.y - camera.y),
+      math.floor(shatter.x - camera.x + shakeX),
+      math.floor(shatter.y - camera.y + shakeY),
       radius
     )
     for shard = 1, 4 do
       local angle = shard * math.pi / 2 + progress * 2
-      local x = shatter.x - camera.x + math.cos(angle) * radius
-      local y = shatter.y - camera.y + math.sin(angle) * radius
+      local x = shatter.x - camera.x + shakeX + math.cos(angle) * radius
+      local y = shatter.y - camera.y + shakeY + math.sin(angle) * radius
       love.graphics.line(
         x,
         y,
@@ -814,27 +913,30 @@ function Renderer:drawHud(player, items)
   )
   love.graphics.setFont(self.hudFont)
   local stats = {
-    { key = 'damage', label = 'Damage', value = player.stats.damage / 20 },
-    { key = 'speed', label = 'Speed', value = player.speed / 350 },
-    { key = 'attackSpeed', label = 'Attack', value = (player.stats.attackSpeed or 1) / 1 },
-    { key = 'range', label = 'Range', value = 112 / 112 },
-    { key = 'defense', label = 'Defense', value = player.stats.defense or 0 },
+    { key = 'damage', value = function() return tostring(math.max(1, math.floor(player.stats.damage / 20))) end, image = self.statImages.damage },
+    { key = 'speed', value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
+    { key = 'attackSpeed', value = function() return formatStat((player.stats.attackSpeed or 1) / 1) end, image = self.statImages.attackSpeed },
+    { key = 'range', value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
+    { key = 'defense', value = function() return tostring(player.stats.defense or 0) end, image = self.statImages.defense },
   }
   local statsY = hudTop + 64
-  for index, stat in ipairs(stats) do
-    local image = self.statImages[stat.key]
-    local y = statsY + (index - 1) * statRowSpacing
-    love.graphics.draw(image, hudX, math.floor(y), 0, hudScale, hudScale)
-    love.graphics.print(
-      string.format('%s: %s', stat.label, formatStat(stat.value)),
-      hudX + statIconSize + 10,
-      y + 7
-    )
-  end
+  local statIconSize = 18
+  local statColor = { 1, 0.86, 0.52 }
+  local rowGap = 18
+  local statX = hudX + 8
+  local statY = statsY
+  love.graphics.setFont(self.hudFont)
 
-  love.graphics.setColor(1, 1, 1, 0.9)
-  local debugY = statsY + #stats * statRowSpacing + 16
-  love.graphics.print('WASD to move | Arrows to attack', hudX, debugY)
+  for _, stat in ipairs(stats) do
+    local image = stat.image
+    if image then
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(image, math.floor(statX), math.floor(statY), 0, 1, 1)
+      love.graphics.setColor(statColor[1], statColor[2], statColor[3], 1)
+      love.graphics.print(tostring(stat.value()), math.floor(statX + statIconSize + 10), math.floor(statY + 1))
+      statY = statY + rowGap + 12
+    end
+  end
   local inventory = items:getInventoryItems()
   local iconSize = 28
   local iconSpacing = 34

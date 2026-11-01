@@ -52,9 +52,17 @@ function Centipede:update(dt, player)
     self.animationTime = self.animationTime + dt
     self.splitTimer = self.splitTimer + dt
 
+    if distance > 0 then
+      self.vx = (distanceX / distance) * self.speed * speedScale
+      self.vy = (distanceY / distance) * self.speed * speedScale
+    else
+      self.vx = 0
+      self.vy = 0
+    end
+
     if distance > self.contactRadius and distance > 0 then
-      self.x = self.x + distanceX / distance * self.speed * speedScale * dt
-      self.y = self.y + distanceY / distance * self.speed * speedScale * dt
+      self.x = self.x + self.vx * dt
+      self.y = self.y + self.vy * dt
     end
 
     self.attackCooldown = math.max(0, self.attackCooldown - dt)

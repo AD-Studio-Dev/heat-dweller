@@ -261,6 +261,11 @@ function LilSnake:draw(camera)
   if not self.alive then
     return
   end
+  local shakeX, shakeY = 0, 0
+  if self.deathSequence then
+    shakeX = math.random(-4, 4)
+    shakeY = math.random(-4, 4)
+  end
   local animationFrame = self.animationFrame
   local frameName
   if self.facing == 'up' or self.facing == 'down' then
@@ -289,8 +294,8 @@ function LilSnake:draw(camera)
     love.graphics.draw(
       LilSnake.image,
       body.quad,
-      math.floor(segment.x - camera.x),
-      math.floor(segment.y - camera.y),
+      math.floor(segment.x - camera.x + shakeX),
+      math.floor(segment.y - camera.y + shakeY),
       0,
       bodyScaleX,
       1.5,
@@ -302,8 +307,8 @@ function LilSnake:draw(camera)
   love.graphics.draw(
     LilSnake.image,
     LilSnake.frames[frameName].quad,
-    math.floor(self.x - camera.x),
-    math.floor(self.y - camera.y),
+    math.floor(self.x - camera.x + shakeX),
+    math.floor(self.y - camera.y + shakeY),
     0,
     headScaleX,
     headScaleY,
