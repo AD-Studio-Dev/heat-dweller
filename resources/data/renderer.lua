@@ -36,7 +36,9 @@ function Renderer:drawPlayer(game, camera)
   local scale = 2
 
   self:drawFrame(bodyFrame, drawX + offsetX, drawY, scaleX * scale, scale)
-  self:drawFrame(headFrame, drawX + offsetX, drawY, scaleX * scale, scale)
+  if not game.player.isHurt then
+    self:drawFrame(headFrame, drawX + offsetX, drawY, scaleX * scale, scale)
+  end
 end
 
 function Renderer:drawFrame(frameName, x, y, scaleX, scaleY)

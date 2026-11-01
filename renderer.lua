@@ -1029,7 +1029,9 @@ function Renderer:drawPlayer(player, camera)
   end
   love.graphics.setColor(1, 1, 1, alpha)
   self:drawFrame(player:getBodyFrame(), drawX, drawY, scaleX, scale)
-  self:drawFrame(player:getHeadFrame(), drawX, drawY, scaleX, scale)
+  if not player.isHurt then
+    self:drawFrame(player:getHeadFrame(), drawX, drawY, scaleX, scale)
+  end
 
   love.graphics.setColor(1, 1, 1, 1)
 end
