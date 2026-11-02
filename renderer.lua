@@ -282,10 +282,10 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
     local cardCenterX = centerX + offset * slotWidth
     local cardX = math.floor(cardCenterX - currentCardWidth / 2)
     local cardY = math.floor((height - currentCardHeight) / 2 + 12)
-    local isUnlocked = character.isUnlocked ~= false and character.name == 'Matthew'
-    local isMatthewSelected = isUnlocked and focused
-    local displayName = isMatthewSelected and 'Matthew' or '?'
-    local portraitImage = isUnlocked and (character.image or self.missingUnknownImage) or self.missingUnknownImage
+    local isLocked = character.isUnlocked == false
+    local displayName = isLocked and '???' or (character.name or '?')
+    local displaySubtitle = isLocked and '???' or (character.title or character.subtitle or '???')
+    local portraitImage = isLocked and self.missingUnknownImage or (character.image or self.missingUnknownImage)
 
     love.graphics.setColor(0.025, 0.018, 0.016, 0.88 * alpha)
     love.graphics.rectangle('fill', cardX, cardY, currentCardWidth, currentCardHeight, 6, 6)
@@ -337,32 +337,39 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
     end
 
     if focused then
+      local titleY = cardY + currentCardHeight * 0.49
+      local quoteY = cardY + currentCardHeight * 0.56
+
+      love.graphics.setColor(0.82, 0.78, 0.68, 1)
+      love.graphics.setFont(self.smallFont)
+      love.graphics.printf(displaySubtitle, cardX + 12, titleY, currentCardWidth - 24, 'center')
+
       love.graphics.setColor(0.72, 0.56, 0.39, 1)
       love.graphics.setFont(self.smallFont)
-      love.graphics.printf(character.subtitle or '', cardX + 12, cardY + currentCardHeight * 0.49,
+      love.graphics.printf(isLocked and '???' or (character.quote or displaySubtitle), cardX + 12, quoteY,
         currentCardWidth - 24, 'center')
+
       love.graphics.setColor(0.98, 0.49, 0.16, 0.75)
       love.graphics.rectangle(
         'fill',
         cardX + currentCardWidth * 0.12,
-        cardY + currentCardHeight * 0.56,
+        cardY + currentCardHeight * 0.61,
         currentCardWidth * 0.76,
         2
       )
 
       local stats = {
-        { key = 'health', value = tostring(math.max(1, math.ceil(100 / 20))), image = self.heartsImage, quad = self.heartQuads.full },
-        { key = 'speed', value = tostring(350), image = self.statImages.speed },
-        { key = 'damage', value = tostring(20), image = self.statImages.damage },
-        { key = 'range', value = tostring(540), image = self.statImages.range },
-        { key = 'attackSpeed', value = '2.9', image = self.statImages.attackSpeed },
+        { key = 'health', value = isLocked and '?' or tostring(math.max(1, math.ceil(100 / 20))), image = self.heartsImage, quad = self.heartQuads.full },
+        { key = 'speed', value = isLocked and '?' or tostring(350), image = self.statImages.speed },
+        { key = 'damage', value = isLocked and '?' or tostring(20), image = self.statImages.damage },
+        { key = 'range', value = isLocked and '?' or tostring(540), image = self.statImages.range },
+        { key = 'attackSpeed', value = isLocked and '?' or '2.9', image = self.statImages.attackSpeed },
       }
       local statIconSize = 18
       local statGap = 10
       local statTextGap = 8
       local statsX = cardX + currentCardWidth * 0.12
       local statsY = cardY + currentCardHeight * 0.6
-      local rowWidth = 0
       local rowEntries = {}
 
       for _, stat in ipairs(stats) do
@@ -373,7 +380,6 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
           quad = stat.quad,
           width = statIconSize + statTextGap + self.smallFont:getWidth(valueText),
         }
-        rowWidth = rowWidth + statIconSize + statTextGap + self.smallFont:getWidth(valueText) + statGap
       end
 
       local dividerY = cardY + currentCardHeight * 0.57

@@ -152,14 +152,18 @@ local debugBosses = {
 local characters = {
   {
     name = 'Matthew',
-    subtitle = 'The determined dweller',
+    title = 'Son of Mark',
+    subtitle = 'Son of Mark',
+    quote = "I'm coming for whoever did this to me.",
     isUnlocked = true,
     imagePath = 'resources/sprites/characters/character_001_matthew.png',
     spriteSheetPath = 'resources/gfx/characters/character_001_matthew.png',
   },
   {
     name = 'Stella',
-    subtitle = 'The bright survivor',
+    title = 'The Unstable Spark',
+    subtitle = 'The Unstable Spark',
+    quote = 'Touch me and see what happens.',
     isUnlocked = false,
     imagePath = 'resources/sprites/characters/character_002_stella.png',
   },
