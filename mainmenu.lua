@@ -60,6 +60,8 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     stageBackground = love.graphics.newImage('resources/gfx/ui/stage/mainmenustage.png'),
     pauseSelection = 1,
     pauseScreen = 'main',
+    pauseFrameCanvas = nil,
+    pauseCaptureDirty = true,
     pendingBinding = nil,
     itemSelectorOpen = false,
     itemSelectorQuery = '',
@@ -298,6 +300,7 @@ end
 function MainMenu:openPause()
   self.pauseSelection = 1
   self.pauseScreen = 'main'
+  self.pauseCaptureDirty = true
   self.pendingBinding = nil
   self.pauseStickDirection = 0
   self.itemSelection = 1
@@ -457,8 +460,16 @@ function MainMenu:drawPause(input, items)
   love.graphics.setShader()
   local width = love.graphics.getWidth()
   local height = love.graphics.getHeight()
+  if self.pauseFrameCanvas then
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(self.pauseFrameCanvas, 0, 0, 0, 1, 1)
+    love.graphics.setColor(0.03, 0.025, 0.028, 0.52)
+    love.graphics.rectangle('fill', 0, 0, width, height)
+  else
+    drawBackground(width, height, self.animationTime, 0.84, nil, self.stageBackground)
+    drawBackground(width, height, self.animationTime, 0.52, self.heatParticles, self.stageBackground)
+  end
   local centerX = width / 2
-  drawBackground(width, height, self.animationTime, 0.84, nil, self.stageBackground)
   drawScribble('PAUSED', centerX, height * 0.18, self.titleFont, { 0.96, 0.84, 0.63 })
 
   local optionFont = self.optionFont

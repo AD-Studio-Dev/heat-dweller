@@ -24,6 +24,17 @@ local FireFoam = require('firefoam')
 local SAVE_FILE = 'heat_dweller_run.json'
 local PROFILE_FILE = 'heat_dweller_profile.json'
 local FLOOR_TYPES = Rooms.floorTypes
+local FLOOR_NAME_LABELS = {
+  basement = 'BASEMENT',
+  living_room = 'LIVING ROOM',
+  kitchen = 'KITCHEN',
+  bedroom = 'BEDROOM',
+  attic = 'ATTIC',
+  roof = 'ROOF',
+  sky = 'THE SKY',
+}
+local currentFloorDisplayName = 'BASEMENT'
+local currentFloorBannerTimer = 0
 local FLOOR_PALETTES = {
   basement = { base = { 0.09, 0.095, 0.1 }, tile = { 0.14, 0.148, 0.152 } },
   living_room = { base = { 0.28, 0.16, 0.14 }, tile = { 0.34, 0.19, 0.16 } },
@@ -97,6 +108,7 @@ local floorTransitionFadeDuration = 0.45
 local floorTransitionTargetIndex
 local floorTransitionFloorName
 local floorTransitionLoaded
+local floorTransitionSoundDuration
 local screenShakeTime
 local screenShakeDuration = 0.2
 local screenShakeStrength
@@ -109,6 +121,7 @@ local spiderSpawnTimer
 local bossIntroTimer
 local bossIntroType
 local bossDefeated
+local isAudioLocked = false
 local isPickingUpItem
 local pickupTimer
 local pickupNotification
@@ -149,6 +162,13 @@ local characters = {
   },
 }
 
+local function getFloorDisplayName(floorType)
+  if not floorType then
+    return currentFloorDisplayName or 'BASEMENT'
+  end
+  return FLOOR_NAME_LABELS[floorType] or string.upper((tostring(floorType):gsub('_', ' ')))
+end
+
 local function floorTypeForIndex(index)
   return FLOOR_TYPES[index]
 end
@@ -171,6 +191,50 @@ local function registerSfxSource(source)
   audioSfxSources[source] = true
   source:setVolume(audioSfxVolume)
   return source
+end
+
+local function hardStopMusicSources()
+  local sources = {
+    menuMusic,
+    backgroundMusic,
+    basementOscMusic,
+    kitchenMusic,
+    bossIntroMusic,
+    bossActiveStartMusic,
+    bossLoopMusic,
+  }
+
+  for _, source in ipairs(sources) do
+    if source then
+      source:stop()
+      source:setVolume(0)
+    end
+  end
+end
+
+local function unlockBossRoom()
+  if not currentRoom then
+    return
+  end
+
+  currentRoom.dealUnlocked = true
+  currentRoom.cleared = true
+  doorsLocked = false
+
+  if currentRoom.doors then
+    for _, door in pairs(currentRoom.doors) do
+      door.locked = false
+    end
+  end
+
+  if currentRoom.boss and not ladder and world.floorIndex < #FLOOR_TYPES then
+    ladder = { x = 104, y = 104 }
+  end
+
+  if currentRoom.boss and not roomRewardSpawned then
+    items:spawnFloorReward(world.width / 2, world.height / 2)
+    roomRewardSpawned = true
+  end
 end
 
 local function saveProfile()
@@ -516,7 +580,20 @@ local function initializeAudio()
   bossLoopMusic = love.audio.newSource('resources/music/music/bossfightactiveloop.ogg', 'stream')
   bossLoopMusic:setLooping(true)
   bossLoopMusic:setVolume(audioMusicVolume)
-  bossDefeatSound = createBossDefeatTone()
+  bossDefeatSound = nil
+  local bossDefeatPaths = {
+    'resources/music/sfx/beatbosswin.wav',
+    'resources/music/music/beatbosswin.wav',
+  }
+  for _, bossDefeatPath in ipairs(bossDefeatPaths) do
+    if love.filesystem.getInfo(bossDefeatPath) then
+      bossDefeatSound = registerSfxSource(love.audio.newSource(bossDefeatPath, 'static'))
+      break
+    end
+  end
+  if not bossDefeatSound then
+    bossDefeatSound = createBossDefeatTone()
+  end
   local floorTransitionPaths = {
     'resources/music/music/floor transition.wav',
     'resources/music/sfx/floor transition.wav',
@@ -878,6 +955,8 @@ continueRun = function()
 
   world.floorIndex = savedFloorIndex
   world.floorType = savedFloorType
+  currentFloorDisplayName = getFloorDisplayName(savedFloorType)
+  currentFloorBannerTimer = 3
   world.roomType = snapshot.world.roomType or world.floorType
   setFloorMusicVolume()
   rooms = snapshot.rooms
@@ -1085,8 +1164,12 @@ function love.update(dt)
     screenShakeTime = math.max(0, screenShakeTime - dt)
   end
 
+  if currentFloorBannerTimer > 0 then
+    currentFloorBannerTimer = math.max(0, currentFloorBannerTimer - dt)
+  end
+
   if gameState == 'floor_transition' then
-    floorTransitionTimer = floorTransitionTimer + dt
+    floorTransitionTimer = (floorTransitionTimer or 0) + dt
     finishFloorTransition()
     return
   end
@@ -1585,6 +1668,78 @@ function love.quit()
   end
 end
 
+local function captureGameplayPauseFrame()
+  if not mainMenu or not world then
+    return
+  end
+
+  local width, height = love.graphics.getDimensions()
+  if not mainMenu.pauseFrameCanvas or mainMenu.pauseFrameCanvas:getWidth() ~= width
+      or mainMenu.pauseFrameCanvas:getHeight() ~= height then
+    mainMenu.pauseFrameCanvas = love.graphics.newCanvas(width, height)
+  end
+
+  local previousCanvas = love.graphics.getCanvas()
+  love.graphics.setCanvas(mainMenu.pauseFrameCanvas)
+  love.graphics.clear(0.055, 0.07, 0.08)
+
+  local shakeX, shakeY = getScreenShakeOffset()
+  local cameraX, cameraY = world.camera.x, world.camera.y
+  local screenWidth, screenHeight = love.graphics.getDimensions()
+  local letterboxX = math.max(0, (screenWidth - world.width) / 2)
+  local letterboxY = math.max(0, (screenHeight - world.height) / 2)
+  world.camera.x = cameraX - shakeX - letterboxX
+  world.camera.y = cameraY - shakeY - letterboxY
+  drawWorld()
+  items:draw(world.camera)
+  drawActiveEffects(world.camera)
+  drawSpecialRoomContents()
+  for _, enemy in ipairs(enemies) do
+    if enemy.kind == 'fly' then
+      enemy:draw(world.camera)
+    else
+      renderer:drawEnemy(enemy, world.camera)
+    end
+  end
+  for _, projectile in ipairs(acidProjectiles) do
+    renderer:drawAcidProjectile(projectile, world.camera)
+  end
+  for _, projectile in ipairs(sweatProjectiles) do
+    renderer:drawSweatProjectile(projectile, world.camera)
+  end
+  for _, splash in ipairs(sweatSplashes) do
+    renderer:drawSweatSplash(splash, world.camera)
+  end
+  renderer:drawCrawler(crawler, world.camera)
+  renderer:drawGeometric(geometric, world.camera)
+  renderer:drawStuffing(stuffing, world.camera)
+  if stuffing and stuffing.projectiles then
+    for _, projectile in ipairs(stuffing.projectiles) do
+      renderer:drawStuffingProjectile(projectile, world.camera)
+    end
+  end
+  renderer:drawBabyWidow(babyWidow, world.camera)
+  if lilSnake then
+    lilSnake:draw(world.camera)
+  end
+  renderer:drawPlayer(player, world.camera)
+  renderer:drawFireFoam(player, world.camera, fireFoam.beam)
+  items:drawStatNotifications(world.camera)
+  world.camera.x, world.camera.y = cameraX, cameraY
+  renderer:drawHud(player, items)
+  renderer:drawActiveItem(items.heldActive, items.cooldownRemaining)
+  renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
+  drawCultistChoiceOverlay()
+  if currentRoom and currentRoom.boss then
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing)
+  end
+  if pickupNotification then
+    renderer:drawPickupNotification(pickupNotification, pickupNotificationElapsed, pickupNotificationDuration)
+  end
+  love.graphics.setCanvas(previousCanvas)
+  mainMenu.pauseCaptureDirty = false
+end
+
 function love.draw()
   love.graphics.clear(0.055, 0.07, 0.08)
 
@@ -1654,15 +1809,16 @@ function love.draw()
 
   if gameState == 'floor_transition' then
     drawWorld()
-    local fadeInProgress = math.min(1, floorTransitionTimer / floorTransitionFadeDuration)
+    local transitionDuration = floorTransitionSoundDuration or floorTransitionDuration
+    local fadeInProgress = math.min(1, (floorTransitionTimer or 0) / floorTransitionFadeDuration)
     local fadeOutProgress = math.min(
       1,
-      (floorTransitionDuration - floorTransitionTimer) / floorTransitionFadeDuration
+      (transitionDuration - (floorTransitionTimer or 0)) / floorTransitionFadeDuration
     )
     local overlayAlpha = 0.96 * fadeInProgress * fadeOutProgress
     love.graphics.setColor(0.02, 0.025, 0.035, overlayAlpha)
     love.graphics.rectangle('fill', 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-    local textAlpha = math.min(1, floorTransitionTimer / 0.3) * fadeOutProgress
+    local textAlpha = math.min(1, (floorTransitionTimer or 0) / 0.3) * fadeOutProgress
     love.graphics.setColor(0.95, 0.92, 0.82, textAlpha)
     love.graphics.setFont(renderer.floorIntroFont or renderer.bigFont)
     love.graphics.printf(
@@ -1682,6 +1838,14 @@ function love.draw()
     love.graphics.setColor(0.95, 0.25, 0.2, 1)
     love.graphics.setFont(renderer.bigFont)
     love.graphics.printf('GAME OVER', 0, love.graphics.getHeight() / 2 - 20, love.graphics.getWidth(), 'center')
+    return
+  end
+
+  if gameState == 'paused' then
+    if mainMenu and mainMenu.pauseCaptureDirty then
+      captureGameplayPauseFrame()
+    end
+    mainMenu:drawPause(input, items)
     return
   end
 
@@ -2349,6 +2513,7 @@ function drawWorld()
   if ladder then
     drawLadder()
   end
+  drawFloorBanner()
   if isShop or isCultistDeal then
     love.graphics.setColor(isShop and 0.95 or 0.76, isShop and 0.72 or 0.22, isShop and 0.2 or 0.8, 1)
     love.graphics.rectangle('fill', world.width / 2 - 110, 56, 220, 44)
@@ -2418,11 +2583,25 @@ local function spawnBossDeathParticles(boss)
   end
 end
 
-local function startBossDeathSequence(boss)
+function startFloorMusic()
+  if world.floorType == 'kitchen' then
+    startKitchenMusic()
+  elseif world.floorType == 'basement' then
+    startBasementMusic()
+  else
+    stopKitchenMusic(false)
+    stopBasementMusic(false)
+    setFloorMusicVolume()
+    backgroundMusic:play()
+  end
+end
+
+function startBossDeathSequence(boss)
   if not boss or boss.deathSequence then
     return
   end
 
+  boss.isDying = true
   boss.deathSequence = {
     duration = 1.8,
     timer = 1.8,
@@ -2432,14 +2611,17 @@ local function startBossDeathSequence(boss)
   bossDeathParticles = {}
   spawnBossDeathParticles(boss)
   bossDefeated = true
+  isAudioLocked = false
   profile.bossesDefeated = profile.bossesDefeated + 1
   saveProfile()
   refreshMenuExtras()
-  bossLoopMusic:stop()
-  bossActiveStartMusic:stop()
+
+  unlockBossRoom()
+  hardStopMusicSources()
   bossMusicPhase = nil
-  backgroundMusic:stop()
+
   if bossDefeatSound then
+    bossDefeatSound:setVolume(audioSfxVolume)
     bossDefeatSound:stop()
     bossDefeatSound:play()
   end
@@ -2472,7 +2654,7 @@ function updateBossDeathParticles(dt)
   end
 end
 
-local function updateBossDeathSequence(dt, boss)
+function updateBossDeathSequence(dt, boss)
   if not boss or not boss.deathSequence then
     return
   end
@@ -2493,23 +2675,8 @@ local function updateBossDeathSequence(dt, boss)
       elseif stuffing == boss then
         stuffing = nil
       end
-      if currentRoom and currentRoom.boss and not ladder and world.floorIndex < #FLOOR_TYPES then
-        ladder = { x = 104, y = 104 }
-      end
-      if currentRoom then
-        currentRoom.dealUnlocked = true
-        currentRoom.cleared = true
-        local doorLocked = false
-        if currentRoom.doors then
-          for _, door in pairs(currentRoom.doors) do
-            door.locked = false
-          end
-        end
-        if currentRoom.boss and not roomRewardSpawned then
-          items:spawnFloorReward(world.width / 2, world.height / 2)
-          roomRewardSpawned = true
-        end
-      end
+      startFloorMusic()
+      unlockBossRoom()
     end
     return
   end
@@ -2937,7 +3104,33 @@ function playFloorTransitionSound()
   if floorTransitionSound then
     floorTransitionSound:stop()
     floorTransitionSound:play()
+    floorTransitionSoundDuration = floorTransitionSound:getDuration()
+  else
+    floorTransitionSoundDuration = floorTransitionDuration
   end
+end
+
+function drawFloorBanner()
+  if not renderer or not world then
+    return
+  end
+
+  local floorName = currentFloorDisplayName or getFloorDisplayName(world.floorType)
+  if not floorName or floorName == '' or currentFloorBannerTimer <= 0 then
+    return
+  end
+
+  local width = love.graphics.getWidth()
+  local screenHeight = love.graphics.getHeight()
+  local y = screenHeight * 0.18
+  local alpha = math.max(0, 1 - (3 - currentFloorBannerTimer) / 3)
+  local font = renderer.floorIntroFont or renderer.bigFont
+  love.graphics.setFont(font)
+  love.graphics.setColor(0, 0, 0, 0.48 * alpha)
+  love.graphics.printf(floorName, 0, y + 6, width, 'center')
+  love.graphics.setColor(0.96, 0.94, 0.89, alpha)
+  love.graphics.printf(floorName, 0, y, width, 'center')
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function updateBasementMusicFade(dt)
@@ -3017,6 +3210,9 @@ updateMainMenuMusic = function(dt)
 end
 
 function startBasementMusic()
+  if isAudioLocked then
+    return
+  end
   if not basementOscMusic then
     return
   end
@@ -3053,6 +3249,9 @@ function stopBasementMusic(fade)
 end
 
 function startKitchenMusic()
+  if isAudioLocked then
+    return
+  end
   if not kitchenMusic then
     return
   end
@@ -3092,12 +3291,16 @@ end
 
 function pauseGameAudio()
   local function duck(source)
-    if source and source:isPlaying() then
+    if source then
       source:setVolume(0)
+      if source:isPlaying() then
+        source:pause()
+      end
     end
   end
 
   duck(backgroundMusic)
+  duck(bossIntroMusic)
   duck(bossActiveStartMusic)
   duck(bossLoopMusic)
   duck(basementOscMusic)
@@ -3105,6 +3308,10 @@ function pauseGameAudio()
 end
 
 function resumeGameAudio()
+  if isAudioLocked then
+    return
+  end
+
   local function restore(source, targetVolume)
     if source and targetVolume ~= nil then
       source:setVolume(targetVolume)
@@ -3128,6 +3335,10 @@ function resumeGameAudio()
 end
 
 function resumePausedAudio()
+  if isAudioLocked then
+    return
+  end
+
   local activeBoss = crawler or lilSnake or geometric or stuffing
   if currentRoom and currentRoom.boss and activeBoss and activeBoss.alive then
     if bossMusicPhase == 'active_start' then
@@ -3158,8 +3369,10 @@ function transitionToNextFloor()
     return false
   end
 
+  isAudioLocked = true
   stopBasementMusic(false)
   stopKitchenMusic(false)
+  hardStopMusicSources()
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
   bossLoopMusic:stop()
@@ -3168,17 +3381,11 @@ function transitionToNextFloor()
   floorTransitionTimer = 0
   floorTransitionTargetIndex = world.floorIndex + 1
   local nextFloorType = floorTypeForIndex(floorTransitionTargetIndex)
-  local floorNames = {
-    basement = 'BASEMENT',
-    living_room = 'LIVING ROOM',
-    kitchen = 'KITCHEN',
-    bedroom = 'BEDROOM',
-    attic = 'ATTIC',
-    roof = 'ROOF',
-    sky = 'THE SKY',
-  }
-  floorTransitionFloorName = floorNames[nextFloorType]
+  floorTransitionFloorName = getFloorDisplayName(nextFloorType)
   floorTransitionLoaded = false
+  floorTransitionSoundDuration = floorTransitionSound and floorTransitionSound:getDuration() or floorTransitionDuration
+  pauseGameAudio()
+  playFloorTransitionSound()
   gameState = 'floor_transition'
   return true
 end
@@ -3189,6 +3396,7 @@ loadFloor = function(floorIndex)
     return false, 'Unsupported floor index: ' .. tostring(floorIndex)
   end
 
+  isAudioLocked = false
   stopBasementMusic(false)
   stopKitchenMusic(false)
   bossIntroMusic:stop()
@@ -3200,6 +3408,8 @@ loadFloor = function(floorIndex)
   world.floorIndex = floorIndex
   world.floorType = nextFloorType
   world.roomType = nextFloorType
+  currentFloorDisplayName = getFloorDisplayName(nextFloorType)
+  currentFloorBannerTimer = 3
   bossDefeated = false
   rooms = Rooms.generate(15, nextFloorType, runSeed + floorIndex, floorIndex)
   roomIndex = 1
@@ -3229,21 +3439,24 @@ loadFloor = function(floorIndex)
 end
 
 function finishFloorTransition()
-  if not floorTransitionLoaded
-      and floorTransitionTimer >= floorTransitionFadeDuration then
+  local transitionDuration = (floorTransitionSound and floorTransitionSound:getDuration()) or floorTransitionDuration
+  if not floorTransitionLoaded and floorTransitionTimer >= transitionDuration then
     local loaded, loadError = loadFloor(floorTransitionTargetIndex)
     if not loaded then
       print('Floor transition failed: ' .. tostring(loadError))
+      isAudioLocked = false
       gameState = 'playing'
       floorTransitionTimer = nil
       floorTransitionTargetIndex = nil
       floorTransitionFloorName = nil
+      floorTransitionLoaded = nil
       return false
     end
     floorTransitionLoaded = true
   end
 
-  if floorTransitionTimer >= floorTransitionDuration then
+  if floorTransitionTimer >= transitionDuration + 0.08 then
+    isAudioLocked = false
     gameState = 'playing'
     floorTransitionTimer = nil
     floorTransitionTargetIndex = nil
