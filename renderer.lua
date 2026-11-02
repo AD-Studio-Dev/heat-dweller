@@ -1123,6 +1123,14 @@ function Renderer:drawPlayer(player, camera)
   local drawY = math.floor(player.y - camera.y - height / 2)
   local scale = 2
   local scaleX = player.facing == 'left' and -scale or scale
+  local skyForm = self.atlas and self.atlas.imagePath
+    and string.find(self.atlas.imagePath, 'matthew-angel.png', 1, true)
+
+  if skyForm then
+    local bobAmplitude = 2.4
+    local bobSpeed = 4.2
+    drawY = drawY + math.sin(love.timer.getTime() * bobSpeed) * bobAmplitude
+  end
 
   -- A negative scale mirrors around the draw point, so move left-facing
   -- sprites one width to keep their center in the same place.
