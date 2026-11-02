@@ -1,55 +1,60 @@
-# Heat Dweller
+# Heat Dweller (Beta)
 
-A close-to-home roguelite game where you travel through your house as different characters, surive RNG situations where no exact playthrough is the same, and uncover the mystery behind the arsonist.
+> A simple, fast-paced room-based roguelite. Fight your way through a burning household, dodge your nightmares, take risks, and survive the heat.
 
----
-
-## Core Game
-- RNG-based events and loot
-- Multiplayer dev project (collab)
+Created by **Ahmed** and **Dumar**.
 
 ---
 
-## Status
-Early development — systems are being built and may change a lot.
+## 🚀 Key Features
+
+* **Fast and Responsive:** High-speed independent movement and rapid directional sweat-shot attacks.
+* **The Household Ascent:** Climb your way through a burning maze of floors including the Basement, Living Room, Kitchen, Bedroom, Attic, Roof, and Sky.
+* **Procedural Dungeon:** Every run generates a completely randomized layout of rooms, shops, item rooms, locked doors, and Cultist Deals.
+* **Run Persistence:** Save and continue your active runs seamlessly directly from the main menu.
+  * *Local save data location:* `C:\Users\USERNAME\AppData\Roaming\LOVE\heat-dweller`
 
 ---
 
-## Running Source Code
+## 👾 Nightmares & Bosses
 
-Heat Dweller uses the LÖVE2D framework. Install LÖVE 11.x, then run the
-repository from its root directory:
-
-```text
-love .
-```
-
-The game entrypoint is `main.lua`; JavaScript and Electron are not required.
-
-Use `WASD` to move and hold an arrow key or gamepad D-pad direction to fire
-repeated sweat projectiles that way. Hold the left mouse button during a run to
-fire toward the cursor. Matthew can strafe while firing in a separate direction.
-
-New runs generate a seeded, procedural room layout. The title screen's
-**Continue Run** option resumes the most recent run when a save is available.
-Run data is stored in LÖVE's save directory as `heat_dweller_run.json` and is
-updated periodically, when changing rooms, and when leaving the game.
-
-At startup, the game plays `resources/gfx/cutscenes/mainmenucutscene.ogv` when
-the optional intro video is present; press any key, button, or mouse button to
-skip it. If unavailable, a cutscene template screen appears briefly and can
-also be skipped. The title menu includes audio and screen-shake settings, a
-discoveries/stats page, and a quit confirmation. Menu preferences and lifetime
-run/item statistics are stored in LÖVE's save directory as
-`heat_dweller_profile.json`.
-Press Enter or gamepad A at the opening title screen to reach the main menu.
-
-For narrative context, architecture, gameplay-system ownership, and AI handoff
-notes, see [HEAT_DWELLER_CODEBASE_GUIDE.md](./HEAT_DWELLER_CODEBASE_GUIDE.md).
+| Boss / Enemy | Description |
+| :--- | :--- |
+| **Scar** | Waits patiently and moves slowly before dashing. |
+| **Spider & Fly** | Creepy crawlers that will chase you down instantly or buzz around near you. |
+| **Centipede** | Splits into two parts if you don't get to it quick enough. |
+| **The Crawler** | Watch out for its wall-running loop in Phase 2—you'll only have small windows to strike while it recovers from its frantic dashes. |
+| **Lil' Snake** | A fast, multi-segment boss featuring a sharp chase behavior. |
+| **The Geometric** | A late-game gauntlet featuring destructible orbiting armor, multiplying heads, and temporary invulnerability phases. |
+| **The Stuffing** | A giant pillow that sucks you in and gets harder the more you damage it. |
 
 ---
 
-## Dev Team
+## 🎮 Controls
 
-- dotZIP-A1 — Developer
-- dotAndres — Creative Director
+| Action | Control Input |
+| :--- | :--- |
+| **Move** | `WASD` |
+| **Aim & Attack** | `Mouse` / `Arrow Keys` |
+
+---
+
+## 🛠️ How to Run & Play
+
+### Option 1: Play Executable (Windows)
+1. Head to the **[Releases](../../releases)** page for this repository.
+2. Download `Heat-Dweller-Windows.zip` from the latest **Heat Dweller (Beta)** release.
+3. Extract the `.zip` archive to any directory.
+4. Run `heat-dweller.exe` to start playing!
+
+### Option 2: Run from Source (LÖVE 2D)
+1. Install [LÖVE 2D](https://love2d.org/) (version 11.x).
+2. Clone or download this repository:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/heat-dweller.git
+   cd heat-dweller
+   ```
+3. Run the source directory with LÖVE:
+   ```bash
+   love .
+   ```
