@@ -284,6 +284,23 @@ local function loadProfile()
   screenShakeEnabled = savedProfile.screenShakeEnabled ~= false
 end
 
+local function updatePlayerSpriteForFloor()
+  if not renderer or not selectedCharacter or selectedCharacter.name ~= 'Matthew' then
+    return
+  end
+
+  local standardPath = selectedCharacter.spriteSheetPath or 'resources/gfx/characters/character_001_matthew.png'
+  local activePath = world and world.floorType == 'sky'
+      and 'resources/gfx/characters/character_001_matthew-angel.png'
+      or standardPath
+
+  if love.filesystem.getInfo(activePath) then
+    renderer:setCharacter(activePath)
+  elseif love.filesystem.getInfo(standardPath) then
+    renderer:setCharacter(standardPath)
+  end
+end
+
 local function setAudioSettings(musicVolume, sfxVolume, shakeEnabled)
   audioMusicVolume = musicVolume
   audioSfxVolume = sfxVolume
@@ -969,6 +986,7 @@ continueRun = function()
 
   world.floorIndex = savedFloorIndex
   world.floorType = savedFloorType
+  updatePlayerSpriteForFloor()
   currentFloorDisplayName = getFloorDisplayName(savedFloorType)
   currentFloorBannerTimer = 3
   world.roomType = snapshot.world.roomType or world.floorType
@@ -1113,7 +1131,11 @@ continueRun = function()
       backgroundMusic:stop()
       backgroundMusic:setVolume(0)
     end
-    startSkyMusic()
+    if skyMusic and skyMusic:isPlaying() then
+      skyMusic:setVolume(audioMusicVolume)
+    else
+      startSkyMusic()
+    end
   elseif world.floorType ~= 'basement' then
     stopBasementMusic(false)
     stopKitchenMusic(false)
@@ -2854,6 +2876,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   if currentRoom.boss and not currentRoom.cleared and not skipBossIntro then
     stopBasementMusic(true)
     stopKitchenMusic(true)
+    stopSkyMusic(false)
     backgroundMusic:stop()
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
@@ -2871,9 +2894,18 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
       startKitchenMusic()
     elseif world.floorType == 'basement' then
       startBasementMusic()
+    elseif world.floorType == 'sky' then
+      stopKitchenMusic(false)
+      stopBasementMusic(false)
+      if skyMusic and skyMusic:isPlaying() then
+        skyMusic:setVolume(audioMusicVolume)
+      else
+        startSkyMusic()
+      end
     else
       stopKitchenMusic(false)
       stopBasementMusic(false)
+      stopSkyMusic(false)
       backgroundMusic:play()
     end
     gameState = 'playing'
@@ -3350,9 +3382,11 @@ function startSkyMusic()
     backgroundMusic:stop()
     backgroundMusic:setVolume(0)
   end
-  skyMusic:stop()
-  skyMusic:setVolume(0)
-  skyMusic:play()
+  if not skyMusic:isPlaying() then
+    skyMusic:stop()
+    skyMusic:setVolume(0)
+    skyMusic:play()
+  end
   skyMusicFade = { elapsed = 0, duration = 0.75, from = 0, to = 1 }
 end
 
@@ -3443,6 +3477,17 @@ function resumeGameAudio()
       backgroundMusic:stop()
       backgroundMusic:setVolume(0)
     end
+
+    local bossEncounterActive = currentRoom and currentRoom.boss and not currentRoom.cleared
+    local bossBattleActive = bossEncounterActive or (currentRoom and currentRoom.boss and (crawler or lilSnake or geometric or stuffing))
+    if bossBattleActive or gameState == 'boss_intro' then
+      if skyMusic then
+        skyMusic:stop()
+        skyMusic:setVolume(0)
+      end
+      return
+    end
+
     if skyMusic and not bossDefeated then
       restore(skyMusic, audioMusicVolume)
     end
@@ -3527,6 +3572,7 @@ loadFloor = function(floorIndex)
   world.floorIndex = floorIndex
   world.floorType = nextFloorType
   world.roomType = nextFloorType
+  updatePlayerSpriteForFloor()
   currentFloorDisplayName = getFloorDisplayName(nextFloorType)
   currentFloorBannerTimer = 3
   bossDefeated = false
