@@ -50,6 +50,7 @@ function Player.new(config)
       size = 1,
     },
     activeEffects = {},
+    currentFloorType = config.currentFloorType or 'basement',
     onDamaged = config.onDamaged,
   }
 
@@ -83,7 +84,7 @@ function Player:applyItem(item)
   end
 end
 
-function Player:takeDamage(_, damageClass)
+function Player:takeDamage(amount, damageClass, floorType)
   if self.damageInvulnerabilityTimer > 0 or self.stats.health <= 0 then
     return false
   end
@@ -95,7 +96,25 @@ function Player:takeDamage(_, damageClass)
     end
   end
 
+  local targetFloorType = floorType or self.currentFloorType or 'basement'
   local hearts = damageClass == 'boss' and 1 or 0.5
+  if amount ~= nil then
+    local numericAmount = tonumber(amount)
+    if numericAmount ~= nil then
+      if numericAmount <= 1 then
+        hearts = numericAmount
+      else
+        hearts = numericAmount / 20
+      end
+    end
+  end
+
+  if targetFloorType == 'roof' or targetFloorType == 'sky' then
+    hearts = math.max(hearts, 1)
+  elseif damageClass ~= 'boss' then
+    hearts = math.max(hearts, 0.5)
+  end
+
   local healthUnitsPerHeart = 20
   local invulnerabilityDuration = hearts >= 1 and 2 or 1
   if self.onDamaged then

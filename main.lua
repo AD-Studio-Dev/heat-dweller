@@ -449,6 +449,7 @@ local function resetPlayer()
     width = 64,
     height = 64,
     speed = 350,
+    currentFloorType = world.floorType,
     onShootSweat = function(directionX, directionY)
       if selectedCharacter and selectedCharacter.name == 'Matthew' then
         sweatProjectiles[#sweatProjectiles + 1] = SweatProjectile.new(
@@ -3656,6 +3657,9 @@ loadFloor = function(floorIndex)
   world.floorIndex = floorIndex
   world.floorType = nextFloorType
   world.roomType = nextFloorType
+  if player then
+    player.currentFloorType = world.floorType
+  end
   updatePlayerSpriteForFloor()
   currentFloorDisplayName = getFloorDisplayName(nextFloorType)
   currentFloorBannerTimer = 3
