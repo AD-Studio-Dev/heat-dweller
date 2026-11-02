@@ -70,6 +70,8 @@ local basementOscMusic
 local basementMusicFade
 local kitchenMusic
 local kitchenMusicFade
+local skyMusic
+local skyMusicFade
 local floorTransitionSound
 local bossIntroMusic
 local bossActiveStartMusic
@@ -199,6 +201,7 @@ local function hardStopMusicSources()
     backgroundMusic,
     basementOscMusic,
     kitchenMusic,
+    skyMusic,
     bossIntroMusic,
     bossActiveStartMusic,
     bossLoopMusic,
@@ -300,6 +303,7 @@ local function setAudioSettings(musicVolume, sfxVolume, shakeEnabled)
   if bossLoopMusic then bossLoopMusic:setVolume(audioMusicVolume) end
   if basementOscMusic then basementOscMusic:setVolume(audioMusicVolume) end
   if kitchenMusic then kitchenMusic:setVolume(audioMusicVolume) end
+  if skyMusic then skyMusic:setVolume(audioMusicVolume) end
   profile.musicVolume = audioMusicVolume
   profile.sfxVolume = audioSfxVolume
   profile.screenShakeEnabled = screenShakeEnabled
@@ -439,7 +443,11 @@ local function resetPlayer()
     end,
   })
   player.onDamaged = function()
-    matthewHurtSounds[math.random(#matthewHurtSounds)]:play()
+    if matthewHurtSounds and #matthewHurtSounds > 0 then
+      local hurtSound = matthewHurtSounds[math.random(#matthewHurtSounds)]
+      hurtSound:setPitch(love.math.random(92, 108) / 100)
+      hurtSound:play()
+    end
     triggerScreenShake(math.random(4, 6))
     if snowmanArmedTimer and snowmanArmedTimer > 0 then
       snowmanArmedTimer = 0
@@ -537,8 +545,10 @@ end
 
 local function initializeAudio()
   matthewHurtSounds = {
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthew hurt.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthew hurt 2.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt1.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt2.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt3.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt4.wav', 'static')),
   }
   babyWidowSounds = {
     enter = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow enter stage.wav', 'static')),
@@ -571,6 +581,10 @@ local function initializeAudio()
   kitchenMusic:setLooping(true)
   kitchenMusic:setVolume(0)
   kitchenMusic:stop()
+  skyMusic = love.audio.newSource('resources/music/music/thesky/theskysong.ogg', 'stream')
+  skyMusic:setLooping(true)
+  skyMusic:setVolume(0)
+  skyMusic:stop()
   bossIntroMusic = love.audio.newSource('resources/music/music/bossfightstart.ogg', 'stream')
   bossIntroMusic:setLooping(false)
   bossIntroMusic:setVolume(audioMusicVolume)
@@ -1075,20 +1089,43 @@ continueRun = function()
   if currentRoom.boss and not bossDefeated then
     stopBasementMusic(false)
     stopKitchenMusic(false)
-    backgroundMusic:stop()
+    stopSkyMusic(false)
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
     bossMusicPhase = 'loop'
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
     bossLoopMusic:play()
   elseif world.floorType == 'kitchen' then
     stopBasementMusic(false)
+    stopSkyMusic(false)
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
     startKitchenMusic()
+  elseif world.floorType == 'sky' then
+    stopBasementMusic(false)
+    stopKitchenMusic(false)
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
+    startSkyMusic()
   elseif world.floorType ~= 'basement' then
     stopBasementMusic(false)
     stopKitchenMusic(false)
+    stopSkyMusic(false)
     backgroundMusic:play()
   else
     stopKitchenMusic(false)
+    stopSkyMusic(false)
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
     startBasementMusic()
   end
   renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing, 0)
@@ -1151,6 +1188,7 @@ function love.update(dt)
   end
   updateBasementMusicFade(dt)
   updateKitchenMusicFade(dt)
+  updateSkyMusicFade(dt)
   if gameState == 'title' then
     mainMenu:update(dt)
     return
@@ -2588,9 +2626,12 @@ function startFloorMusic()
     startKitchenMusic()
   elseif world.floorType == 'basement' then
     startBasementMusic()
+  elseif world.floorType == 'sky' then
+    startSkyMusic()
   else
     stopKitchenMusic(false)
     stopBasementMusic(false)
+    stopSkyMusic(false)
     setFloorMusicVolume()
     backgroundMusic:play()
   end
@@ -3289,6 +3330,73 @@ function stopKitchenMusic(fade)
   kitchenMusicFade = { elapsed = 0, duration = 0.75, from = currentVolume, to = 0 }
 end
 
+function startSkyMusic()
+  if isAudioLocked then
+    return
+  end
+  if not skyMusic then
+    return
+  end
+
+  if skyMusic:isPlaying() then
+    skyMusicFade = nil
+    skyMusic:setVolume(audioMusicVolume)
+    return
+  end
+
+  stopBasementMusic(false)
+  stopKitchenMusic(false)
+  if backgroundMusic then
+    backgroundMusic:stop()
+    backgroundMusic:setVolume(0)
+  end
+  skyMusic:stop()
+  skyMusic:setVolume(0)
+  skyMusic:play()
+  skyMusicFade = { elapsed = 0, duration = 0.75, from = 0, to = 1 }
+end
+
+function stopSkyMusic(fade)
+  if not skyMusic then
+    return
+  end
+
+  if not fade then
+    skyMusic:stop()
+    skyMusic:setVolume(0)
+    skyMusicFade = nil
+    return
+  end
+
+  local currentVolume = skyMusic:getVolume()
+  if audioMusicVolume > 0 then
+    currentVolume = currentVolume / audioMusicVolume
+  end
+  skyMusicFade = { elapsed = 0, duration = 0.75, from = currentVolume, to = 0 }
+end
+
+function updateSkyMusicFade(dt)
+  if not skyMusicFade then
+    return
+  end
+
+  skyMusicFade.elapsed = math.min(skyMusicFade.elapsed + dt, skyMusicFade.duration)
+  local progress = skyMusicFade.elapsed / skyMusicFade.duration
+  local volume = (skyMusicFade.from + (skyMusicFade.to - skyMusicFade.from) * progress) * audioMusicVolume
+  if skyMusic then
+    skyMusic:setVolume(volume)
+  end
+
+  if progress >= 1 then
+    local stopping = skyMusicFade.to == 0
+    skyMusicFade = nil
+    if stopping and skyMusic then
+      skyMusic:stop()
+      skyMusic:setVolume(0)
+    end
+  end
+end
+
 function pauseGameAudio()
   local function duck(source)
     if source then
@@ -3305,6 +3413,7 @@ function pauseGameAudio()
   duck(bossLoopMusic)
   duck(basementOscMusic)
   duck(kitchenMusic)
+  duck(skyMusic)
 end
 
 function resumeGameAudio()
@@ -3328,6 +3437,14 @@ function resumeGameAudio()
   elseif world.floorType == 'kitchen' then
     if kitchenMusic and not bossDefeated then
       restore(kitchenMusic, audioMusicVolume)
+    end
+  elseif world.floorType == 'sky' then
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
+    if skyMusic and not bossDefeated then
+      restore(skyMusic, audioMusicVolume)
     end
   else
     restore(backgroundMusic, audioMusicVolume * math.min(1, 0.75 + math.max(0, (world and world.floorIndex or 1) - 1) * 0.04))
@@ -3372,6 +3489,7 @@ function transitionToNextFloor()
   isAudioLocked = true
   stopBasementMusic(false)
   stopKitchenMusic(false)
+  stopSkyMusic(false)
   hardStopMusicSources()
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
@@ -3399,6 +3517,7 @@ loadFloor = function(floorIndex)
   isAudioLocked = false
   stopBasementMusic(false)
   stopKitchenMusic(false)
+  stopSkyMusic(false)
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
   bossLoopMusic:stop()
@@ -3430,6 +3549,12 @@ loadFloor = function(floorIndex)
     startBasementMusic()
   elseif world.floorType == 'kitchen' then
     startKitchenMusic()
+  elseif world.floorType == 'sky' then
+    if backgroundMusic then
+      backgroundMusic:stop()
+      backgroundMusic:setVolume(0)
+    end
+    startSkyMusic()
   else
     setFloorMusicVolume()
     backgroundMusic:play()

@@ -97,11 +97,13 @@ function Player:takeDamage(_, damageClass)
 
   local hearts = damageClass == 'boss' and 1 or 0.5
   local healthUnitsPerHeart = 20
+  local invulnerabilityDuration = hearts >= 1 and 2 or 1
   if self.onDamaged then
     self.onDamaged(hearts * healthUnitsPerHeart)
   end
   self.stats.health = math.max(0, self.stats.health - hearts * healthUnitsPerHeart)
-  self.damageInvulnerabilityTimer = self.damageInvulnerabilityDuration
+  self.damageInvulnerabilityDuration = invulnerabilityDuration
+  self.damageInvulnerabilityTimer = invulnerabilityDuration
   self.isHurt = true
   self.hurtAnimationTime = 0
   return true
