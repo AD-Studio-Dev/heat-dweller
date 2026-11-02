@@ -89,6 +89,7 @@ local exploredRooms
 local seenRooms
 local ladder
 local ladderImage
+local deathScreenImage
 local bossDeathParticles = {}
 local doorsLocked
 local gameState
@@ -555,6 +556,38 @@ local function beginNewRunSelection()
   return true
 end
 
+local function restartRunAfterDeath()
+  runSeed = love.math.random(1, 9999999)
+  if not runSeed or type(runSeed) ~= 'number' then
+    runSeed = math.floor((love.timer.getTime() or 0) * 10000)
+  end
+
+  hardStopMusicSources()
+  bossIntroMusic:stop()
+  bossActiveStartMusic:stop()
+  bossLoopMusic:stop()
+  bossMusicPhase = nil
+  stopBasementMusic(false)
+  stopKitchenMusic(false)
+  stopSkyMusic(false)
+  if backgroundMusic then
+    backgroundMusic:stop()
+    backgroundMusic:setVolume(0)
+  end
+  resetPlayerRunState()
+  if selectedCharacter and selectedCharacter.spriteSheetPath then
+    renderer:setCharacter(selectedCharacter.spriteSheetPath)
+  end
+  updatePlayerSpriteForFloor()
+  local loaded, loadError = loadFloor(1)
+  if not loaded then
+    print('Unable to restart run after death: ' .. tostring(loadError))
+    return false
+  end
+  gameState = 'playing'
+  return true
+end
+
 local function initializeProfileAndItems()
   loadProfile()
   initializeItems()
@@ -682,6 +715,18 @@ function love.load()
     floorIndex = 1,
     camera = { x = 0, y = 0, width = 1024, height = 576 },
   }
+  deathScreenImage = nil
+  local deathScreenCandidates = {
+    'resources/gfx/ui/stage/deathscreen.png',
+    'resources/gfx/ui/stage/deathsceen.png',
+  }
+  for _, deathScreenPath in ipairs(deathScreenCandidates) do
+    if love.filesystem.getInfo(deathScreenPath) then
+      deathScreenImage = love.graphics.newImage(deathScreenPath)
+      deathScreenImage:setFilter('nearest', 'nearest')
+      break
+    end
+  end
   input = Input.new()
   initializeAudio()
   resetPlayer()
@@ -1382,8 +1427,7 @@ function love.update(dt)
   end
   if player.stats.health <= 0 then
     gameState = 'game_over'
-    stopBasementMusic(false)
-    backgroundMusic:stop()
+    hardStopMusicSources()
     return
   end
   for _, projectile in ipairs(acidProjectiles) do
@@ -1603,6 +1647,7 @@ function activateHeldItem()
     if player.stats.health <= 10 then
       player.stats.health = 0
       gameState = 'game_over'
+      hardStopMusicSources()
     else
       player.stats.health = 10
     end
@@ -1615,7 +1660,10 @@ function activateHeldItem()
   elseif definition.activeAction == 'cultist_oath' then
     damageRoom(player.stats.damage, 0, 0)
     player.stats.health = math.max(0, player.stats.health - 20)
-    if player.stats.health <= 0 then gameState = 'game_over' end
+    if player.stats.health <= 0 then
+      gameState = 'game_over'
+      hardStopMusicSources()
+    end
     successful = true
   elseif definition.activeAction == 'bread' then
     if math.random() < 0.5 then
@@ -1623,7 +1671,10 @@ function activateHeldItem()
       player.damageInvulnerabilityTimer = math.max(player.damageInvulnerabilityTimer, 5)
     else
       player.stats.health = math.max(0, player.stats.health - 20)
-      if player.stats.health <= 0 then gameState = 'game_over' end
+      if player.stats.health <= 0 then
+        gameState = 'game_over'
+        hardStopMusicSources()
+      end
     end
     successful = true
   elseif definition.activeAction == 'mallet' then
@@ -1633,6 +1684,7 @@ function activateHeldItem()
     elseif player.stats.health <= 10 then
       player.stats.health = 0
       gameState = 'game_over'
+      hardStopMusicSources()
     else
       player.stats.health = 10
     end
@@ -1895,9 +1947,31 @@ function love.draw()
     drawWorld()
     love.graphics.setColor(0.04, 0.01, 0.02, 0.82)
     love.graphics.rectangle('fill', 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-    love.graphics.setColor(0.95, 0.25, 0.2, 1)
-    love.graphics.setFont(renderer.bigFont)
-    love.graphics.printf('GAME OVER', 0, love.graphics.getHeight() / 2 - 20, love.graphics.getWidth(), 'center')
+
+    if deathScreenImage then
+      local width, height = love.graphics.getDimensions()
+      local imageWidth, imageHeight = deathScreenImage:getDimensions()
+      local scale = math.min((width * 0.68) / imageWidth, (height * 0.74) / imageHeight)
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(
+        deathScreenImage,
+        width / 2,
+        height / 2,
+        0,
+        scale,
+        scale,
+        imageWidth / 2,
+        imageHeight / 2
+      )
+    else
+      love.graphics.setColor(0.95, 0.25, 0.2, 1)
+      love.graphics.setFont(renderer.bigFont)
+      love.graphics.printf('GAME OVER', 0, love.graphics.getHeight() / 2 - 20, love.graphics.getWidth(), 'center')
+    end
+
+    love.graphics.setColor(0.96, 0.89, 0.82, 1)
+    love.graphics.setFont(renderer.smallFont)
+    love.graphics.printf('PRESS R OR SPACE TO RESTART', 0, love.graphics.getHeight() * 0.84, love.graphics.getWidth(), 'center')
     return
   end
 
@@ -2129,6 +2203,11 @@ function love.keypressed(key)
         mainMenu.cursorY = 0
       end
     end
+    return
+  end
+
+  if gameState == 'game_over' and (key == 'r' or key == 'space') then
+    restartRunAfterDeath()
     return
   end
 
@@ -3554,6 +3633,11 @@ function transitionToNextFloor()
 end
 
 loadFloor = function(floorIndex)
+  runSeed = runSeed or love.math.random(1, 9999999)
+  if not runSeed or type(runSeed) ~= 'number' then
+    runSeed = love.math.random(1, 9999999)
+  end
+
   local nextFloorType = floorTypeForIndex(floorIndex)
   if not nextFloorType then
     return false, 'Unsupported floor index: ' .. tostring(floorIndex)
