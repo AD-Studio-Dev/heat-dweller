@@ -278,6 +278,18 @@ function Player:update(dt, input, world)
   self.sweatShotCooldown = math.max(0, self.sweatShotCooldown - dt)
 end
 
+-- Seconds between shots after fire-rate items. Single source of truth for both
+-- the shooting cooldown and the HUD attack-speed readout.
+function Player:getShotCooldown()
+  local rateMultiplier = math.max(0.25, 1 + self.stats.fireRate)
+  return math.max(0.12, self.sweatShotDelay / rateMultiplier)
+end
+
+-- Shots per second (about 2.9 with no fire-rate items).
+function Player:getAttackSpeed()
+  return 1 / self:getShotCooldown()
+end
+
 function Player:shootSweat(directionX, directionY)
   if type(directionX) == 'string' then
     local directions = {
@@ -310,8 +322,7 @@ function Player:shootSweat(directionX, directionY)
     return false
   end
 
-  local rateMultiplier = math.max(0.25, 1 + self.stats.fireRate)
-  self.sweatShotCooldown = math.max(0.12, self.sweatShotDelay / rateMultiplier)
+  self.sweatShotCooldown = self:getShotCooldown()
   self.onShootSweat(directionX, directionY)
   self.recoilVelocityX = self.recoilVelocityX - directionX * self.recoilImpulse
   self.recoilVelocityY = self.recoilVelocityY - directionY * self.recoilImpulse

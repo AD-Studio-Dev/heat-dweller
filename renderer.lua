@@ -411,7 +411,11 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
   love.graphics.setLineWidth(1)
   love.graphics.setFont(self.smallFont)
   love.graphics.setColor(0.68, 0.55, 0.39, 0.9)
-  love.graphics.printf('LEFT / RIGHT - CHOOSE     ENTER - BEGIN     F7 - BOSS DEBUG', 0, height - 44, width, 'center')
+  love.graphics.printf(
+    self.debugKeysEnabled and 'LEFT / RIGHT - CHOOSE     ENTER - BEGIN     F7 - BOSS DEBUG'
+      or 'LEFT / RIGHT - CHOOSE     ENTER - BEGIN',
+    0, height - 44, width, 'center'
+  )
   love.graphics.setColor(1, 1, 1, 1)
 end
 
@@ -921,7 +925,7 @@ function Renderer:drawHud(player, items)
   local stats = {
     { key = 'damage', value = function() return tostring(math.max(1, math.floor(player.stats.damage / 20))) end, image = self.statImages.damage },
     { key = 'speed', value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
-    { key = 'attackSpeed', value = function() return formatStat((player.stats.attackSpeed or 1) / 1) end, image = self.statImages.attackSpeed },
+    { key = 'attackSpeed', value = function() return formatStat(player:getAttackSpeed()) end, image = self.statImages.attackSpeed },
     { key = 'range', value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
     { key = 'defense', value = function() return tostring(player.stats.defense or 0) end, image = self.statImages.defense },
   }

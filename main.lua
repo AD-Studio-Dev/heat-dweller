@@ -23,6 +23,12 @@ local FireFoam = require('firefoam')
 
 local SAVE_FILE = 'heat_dweller_run.json'
 local PROFILE_FILE = 'heat_dweller_profile.json'
+-- Developer shortcuts (F7 item spawner / boss teleport, F8 floor skip) are off
+-- for players. Turn them on by setting the environment variable
+-- HEAT_DWELLER_DEBUG=1, or by putting an empty file named debug.flag next to
+-- main.lua (or in the game's save folder). Don't ship debug.flag.
+local DEBUG_KEYS = os.getenv('HEAT_DWELLER_DEBUG') == '1'
+  or love.filesystem.getInfo('debug.flag') ~= nil
 local FLOOR_TYPES = Rooms.floorTypes
 local FLOOR_NAME_LABELS = {
   basement = 'BASEMENT',
@@ -689,6 +695,7 @@ local function initializeMenu()
   ladderImage = love.graphics.newImage('resources/gfx/ui/stage/climbingladder.png')
   ladderImage:setFilter('nearest', 'nearest')
   renderer = Renderer.new(Atlas)
+  renderer.debugKeysEnabled = DEBUG_KEYS
   menuSwitchSound = createMenuTone(1050, 760, 0.065)
   menuSelectSound = createMenuTone(620, 980, 0.11)
   menuCancelSound = createMenuTone(440, 190, 0.14)
@@ -2223,14 +2230,14 @@ function love.keypressed(key)
     return
   end
 
-  if gameState == 'playing' and key == 'f7' then
+  if DEBUG_KEYS and gameState == 'playing' and key == 'f7' then
     mainMenu:openItemSelector(items)
     pauseGameAudio()
     gameState = 'item_selector'
     return
   end
 
-  if gameState == 'playing' and key == 'f8' then
+  if DEBUG_KEYS and gameState == 'playing' and key == 'f8' then
     local nextFloorIndex = world.floorIndex % #FLOOR_TYPES + 1
     local loaded, loadError = loadFloor(nextFloorIndex)
     if not loaded then
@@ -2282,7 +2289,7 @@ function love.keypressed(key)
       elseif key == 'return' or key == 'space' then
         startBossDebug(debugBosses[bossDebugSelection].type)
       end
-    elseif key == 'f7' then
+    elseif DEBUG_KEYS and key == 'f7' then
       bossDebugMenuOpen = true
       bossDebugSelection = 1
     elseif key == 'escape' or key == 'backspace' then
@@ -3066,18 +3073,6 @@ function love.mousepressed(x, y, button)
     return
   end
 
-  function love.wheelmoved(_, y)
-    if gameState == 'item_selector' then
-      mainMenu:moveItemSelector(-y * 3)
-    end
-  end
-
-  function love.textinput(text)
-    if gameState == 'item_selector' then
-      mainMenu:itemSelectorTextinput(text, items)
-    end
-  end
-
   if gameState == 'title' then
     local action = mainMenu:mousepressed(x, y)
     if action == 'new_game' then
@@ -3095,6 +3090,18 @@ function love.mousepressed(x, y, button)
     if not bossDebugMenuOpen then
       startGame()
     end
+  end
+end
+
+function love.wheelmoved(_, y)
+  if gameState == 'item_selector' then
+    mainMenu:moveItemSelector(-y * 3)
+  end
+end
+
+function love.textinput(text)
+  if gameState == 'item_selector' then
+    mainMenu:itemSelectorTextinput(text, items)
   end
 end
 

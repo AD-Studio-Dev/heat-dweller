@@ -303,7 +303,7 @@
 <item 
     id="21"
     name="Bread"
-    description="PRAYING this slice aint stale😭🙏"
+    description="Hopefully not stale!"
     type="Active"
     quality="2"
     itempool="secret,event,floor_reward"

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<achievements gfxroot="gfx/ui/achievements/">
+
+  <!-- Escape the basement -->
+  <achievement id="1" text="Only up from here!" gfx="achivement_001_escapethebasement.png" />
+
+  <!-- Beat the living room -->
+  <achievement id="2" text="Careful Couches" gfx="achivement_002_escapethelivingroom.png" />
+
+  <!-- Beat the kitchen -->
+  <achievement id="3" text="Food Collector" gfx="achivement_003_escapethekitchen.png" itemunlocks="Bread,Kitchen Knife" />
+
+  <!-- Beat the attic once -->
+  <achievement id="4" text="First Victory" gfx="achivement_004_firstvictory.png" itemunlocks="Duality" />
+  <achievement id="5" text="Unlock Stella!" gfx="achivement_005_stellaunlock.png" characterunlocks="Stella" />
+
+  <!-- Beat the attic five times: unlocks the roof (sets the roofUnlocked flag in Lua) -->
+  <achievement id="18" text="Unlock The Roof!" gfx="achivement_018_freshair.png" itemunlocks="Burnt Chilli" /> <!-- Item drawn and added -->
+
+  <!-- The Attic Unlocks -->
+  <achievement id="6" text="Beat The Attic for the second time!" gfx="achivement_006_backformore.png" itemunlocks="Lollipop" /> <!-- Lollipop drawn but not added -->
+  <achievement id="7" text="Hold 50 coins at once" gfx="achivement_007_unlockcoinsack.png" itemunlocks="Coin Sack" /> <!-- Item not drawn nor added -->
+  <achievement id="8" text="Beat The Attic as Stella" gfx="achivement_008_unlockdadsring.png" itemunlocks="Dad's Ring" /> <!-- Item not drawn nor added -->
+  <achievement id="9" text="Beat a boss in under 60 seconds" gfx="achivement_009_unlockmallet.png" itemunlocks="Mallet" /> <!-- Item drawn and added -->
+  <achievement id="10" text="Clear the bedroom without picking up any items" gfx="achivement_010_unlockchildart.png" itemunlocks="Child Art" /> <!-- Item not drawn nor added -->
+  <achievement id="11" text="Clear a floor with a charred heart in your healthbar" gfx="achivement_011_unlocklighter.png" itemunlocks="Lighter" /> <!-- Item not drawn nor added -->
+  <achievement id="12" text="Beat the kitchen floor without taking damage" gfx="achivement_012_unlocksmokedbbq.png" itemunlocks="Smoked BBQ" /> <!-- Item not drawn nor added -->
+  <achievement id="13" text="Finish a run with 10 or more items" gfx="achivement_013_unlockmarkers.png" itemunlocks="Markers,Pack of Markers" /> <!-- Items not drawn nor added -->
+
+  <!-- Beat the attic ten times -->
+  <achievement id="14" text="Beat The Attic ten times" gfx="achivement_014_unlockcultistoath.png" itemunlocks="Cultist Oath" /> <!-- Item drawn and added, not sure if correctly -->
+
+  <!-- Beat a boss without losing health -->
+  <achievement id="15" text="Heartless" gfx="achivement_015_heartless.png" itemunlocks="Scythe" /> <!-- Item drawn and added but not sure if implemented correctly -->
+
+  <!-- Beat a floor without losing health -->
+  <achievement id="16" text="Heartless Warrior" gfx="achivement_016_heartlesswarrior.png" itemunlocks="Playdough Shotgun" /> <!-- Item drawn and added but not implemented correctly -->
+
+  <!-- Beat 2 floors without losing health -->
+  <achievement id="17" text="Heartless Commander" gfx="achivement_017_heartlesscommander.png" itemunlocks="Fire Extinguisher" /> <!-- Item drawn and added but needs to be balanced properly -->
+
+</achievements>
