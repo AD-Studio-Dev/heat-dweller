@@ -1,13 +1,22 @@
--- Hand-drawn title and options screens.
+-- Main menu with image title logo, additive embers and stronger feedback.
+-- Drop-in replacement: same public API as the old MainMenu.
 local MainMenu = {}
 MainMenu.__index = MainMenu
 local drawBackground
 local drawScribble
 local drawFlame
+local drawLogo
+
+local LOGO_PATH = 'resources/gfx/ui/stage/mainmenutitle.png'
 
 local menuOptions = { 'NEW GAME', 'CONTINUE RUN', 'OPTIONS', 'EXTRAS', 'QUIT' }
 local settingsOptions = { 'MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'BACK' }
 local quitOptions = { 'YES, QUIT', 'NO, STAY' }
+
+local HOT = { 1, 0.86, 0.5 }
+local WARM = { 1, 0.68, 0.28 }
+local DIM = { 0.66, 0.58, 0.47 }
+local DISABLED = { 0.3, 0.26, 0.22 }
 
 local function playSound(source)
   if source then
@@ -34,6 +43,53 @@ local function setNearestFilter(resource)
   end
 end
 
+-- Loads the title logo and finds the visible (non-transparent, non-white)
+-- area so the empty padding around the letters doesn't affect scaling.
+local function loadLogo(path)
+  if not love.filesystem.getInfo(path) then
+    return nil
+  end
+  local imageOk, image = pcall(love.graphics.newImage, path)
+  if not imageOk or not image then
+    return nil
+  end
+  image:setFilter('linear', 'linear') -- soft shadow/gradient: do NOT use nearest
+
+  local imageWidth, imageHeight = image:getWidth(), image:getHeight()
+  local minX, minY, maxX, maxY = imageWidth, imageHeight, 0, 0
+  local dataOk, data = pcall(love.image.newImageData, path)
+  if dataOk and data then
+    local step = 2
+    for y = 0, imageHeight - 1, step do
+      for x = 0, imageWidth - 1, step do
+        local r, g, b, a = data:getPixel(x, y)
+        local isWhite = r > 0.96 and g > 0.96 and b > 0.96
+        if a > 0.04 and not isWhite then
+          if x < minX then minX = x end
+          if x > maxX then maxX = x end
+          if y < minY then minY = y end
+          if y > maxY then maxY = y end
+        end
+      end
+    end
+  end
+  if maxX <= minX or maxY <= minY then
+    minX, minY, maxX, maxY = 0, 0, imageWidth - 1, imageHeight - 1
+  end
+  local pad = 6
+  minX = math.max(0, minX - pad)
+  minY = math.max(0, minY - pad)
+  maxX = math.min(imageWidth - 1, maxX + pad)
+  maxY = math.min(imageHeight - 1, maxY + pad)
+  local width, height = maxX - minX + 1, maxY - minY + 1
+  return {
+    image = image,
+    quad = love.graphics.newQuad(minX, minY, width, height, imageWidth, imageHeight),
+    width = width,
+    height = height,
+  }
+end
+
 function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
   local menu = setmetatable({
     renderer = renderer,
@@ -48,13 +104,16 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
       'resources/font/bigfont.ttf',
       math.max(22, math.min(30, love.graphics.getHeight() * 0.055))
     ),
+    logo = loadLogo(LOGO_PATH),
     selection = 1,
     cursorY = 0,
     animationTime = 0,
     screen = 'title',
     transitionTimer = 0,
-    transitionDuration = 0.24,
+    transitionDuration = 0.3,
     transitionDirection = 0,
+    flashTimer = 0,
+    flashDuration = 0.22,
     navigationHistory = {},
     backInputCooldown = 0,
     stageBackground = love.graphics.newImage('resources/gfx/ui/stage/mainmenustage.png'),
@@ -63,6 +122,7 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     pauseFrameCanvas = nil,
     pauseCaptureDirty = true,
     pendingBinding = nil,
+    pauseStickDirection = 0,
     itemSelectorOpen = false,
     itemSelectorQuery = '',
     itemSelectorIndex = 1,
@@ -70,6 +130,7 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     itemSelectorItems = {},
     itemSelectorMessage = nil,
     leftStickDirection = 0,
+    leftStickHorizontalDirection = 0,
     itemSelection = 1,
     optionY = {},
     hasSave = false,
@@ -79,6 +140,7 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     screenShakeEnabled = true,
     onSettingsChanged = nil,
     settingsSelection = 1,
+    quitSelection = 2,
     extrasData = {},
     extrasPage = 1,
     extrasPageCount = 1,
@@ -86,15 +148,20 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     hoveredSelection = nil,
     heatParticles = {},
   }, MainMenu)
-  for index = 1, 36 do
+
+  local screenWidth, screenHeight = love.graphics.getDimensions()
+  for index = 1, 64 do
+    local big = index % 7 == 0
     menu.heatParticles[index] = {
-      x = (index * 73) % love.graphics.getWidth(),
-      y = (index * 47) % love.graphics.getHeight(),
-      size = 1 + index % 3,
-      speed = 8 + index % 18,
-      alpha = 0.12 + (index % 5) * 0.04,
+      x = (index * 73) % screenWidth,
+      y = (index * 47) % screenHeight,
+      size = big and (4 + index % 3) or (2 + index % 3),
+      speed = (big and 26 or 12) + index % 22,
+      alpha = (big and 0.7 or 0.35) + (index % 5) * 0.08,
+      phase = index * 1.7,
     }
   end
+
   setNearestFilter(menu.stageBackground)
   setNearestFilter(menu.titleFont)
   setNearestFilter(menu.optionFont)
@@ -103,6 +170,10 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
   setNearestFilter(menu.renderer.hudFont)
   return menu
 end
+
+----------------------------------------------------------------------
+-- Admin item spawner
+----------------------------------------------------------------------
 
 function MainMenu:openItemSelector(items)
   self.itemSelectorOpen = true
@@ -297,6 +368,10 @@ function MainMenu:drawItemSelector(items)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+----------------------------------------------------------------------
+-- Pause menu
+----------------------------------------------------------------------
+
 function MainMenu:openPause()
   self.pauseSelection = 1
   self.pauseScreen = 'main'
@@ -477,7 +552,7 @@ function MainMenu:drawPause(input, items)
     local cursorY
     for index, option in ipairs(pauseOptions) do
       local y = height * 0.46 + (index - 1) * 54
-      local color = index == self.pauseSelection and { 1, 0.68, 0.28 } or { 0.87, 0.81, 0.68 }
+      local color = index == self.pauseSelection and HOT or DIM
       drawScribble(option, centerX, y, optionFont, color)
       if index == self.pauseSelection then
         cursorY = y
@@ -485,7 +560,7 @@ function MainMenu:drawPause(input, items)
     end
     drawFlame(centerX - 155, cursorY, self.animationTime)
   elseif self.pauseScreen == 'options' then
-    drawScribble('OPTIONS - KEYBINDS', centerX, height * 0.13, self.renderer.bigFont, { 1, 0.68, 0.28 })
+    drawScribble('OPTIONS - KEYBINDS', centerX, height * 0.13, self.renderer.bigFont, WARM)
     local firstY = height * 0.25
     for index, binding in ipairs(remappableBindings) do
       local y = firstY + (index - 1) * 31
@@ -520,7 +595,7 @@ function MainMenu:drawPause(input, items)
       return first.definition.id < second.definition.id
     end)
     self.itemSelection = math.max(1, math.min(self.itemSelection, #self.pauseItems))
-    drawScribble('ITEMS', centerX, height * 0.12, self.renderer.bigFont, { 1, 0.68, 0.28 })
+    drawScribble('ITEMS', centerX, height * 0.12, self.renderer.bigFont, WARM)
     local listX = 34
     local listY = height * 0.22
     local listWidth = width * 0.42
@@ -610,20 +685,25 @@ function MainMenu:drawPause(input, items)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+----------------------------------------------------------------------
+-- Update / navigation
+----------------------------------------------------------------------
+
 function MainMenu:update(dt)
   self.animationTime = self.animationTime + dt
   self:updateTransition(dt)
+  local screenWidth, screenHeight = love.graphics.getDimensions()
   for _, particle in ipairs(self.heatParticles) do
     particle.y = particle.y - particle.speed * dt
-    particle.x = particle.x + math.sin(self.animationTime * 0.7 + particle.y * 0.02) * 4 * dt
-    if particle.y < -4 then
-      particle.y = love.graphics.getHeight() + 4
-      particle.x = (particle.x + love.graphics.getWidth() * 0.618) % love.graphics.getWidth()
+    particle.x = particle.x + math.sin(self.animationTime * 0.7 + particle.phase) * 10 * dt
+    if particle.y < -8 then
+      particle.y = screenHeight + 8
+      particle.x = (particle.x + screenWidth * 0.618) % screenWidth
     end
   end
 
   if self.screen == 'main' then
-    local targetY = love.graphics.getHeight() * 0.4 + (self.selection - 1) * 46
+    local targetY = screenHeight * 0.4 + (self.selection - 1) * 46
     if self.cursorY == 0 then
       self.cursorY = targetY
     else
@@ -637,11 +717,13 @@ function MainMenu:resetNavigation(screen)
   self.screen = screen or 'title'
   self.transitionTimer = 0
   self.transitionDirection = 0
+  self.flashTimer = 0
   self.backInputCooldown = 0
 end
 
 function MainMenu:updateTransition(dt)
   self.transitionTimer = math.max(0, self.transitionTimer - dt)
+  self.flashTimer = math.max(0, self.flashTimer - dt)
   self.backInputCooldown = math.max(0, self.backInputCooldown - dt)
 end
 
@@ -655,6 +737,7 @@ function MainMenu:setScreen(screen, isBack)
     end
     self.screen = screen
     self.transitionTimer = self.transitionDuration
+    self.flashTimer = self.flashDuration
   end
 end
 
@@ -684,17 +767,24 @@ function MainMenu:getTransitionOffset()
   end
   local progress = self.transitionTimer / self.transitionDuration
   local easedProgress = progress * progress
-  return -self.transitionDirection * 42 * easedProgress,
-    self.transitionDirection * 30 * easedProgress
+  return -self.transitionDirection * 70 * easedProgress,
+    self.transitionDirection * 44 * easedProgress
 end
 
 function MainMenu:drawTransitionOverlay(width, height)
-  if self.transitionTimer <= 0 then
-    return
+  if self.transitionTimer > 0 then
+    local progress = self.transitionTimer / self.transitionDuration
+    love.graphics.setColor(0.01, 0.008, 0.006, progress * 0.3)
+    love.graphics.rectangle('fill', 0, 0, width, height)
   end
-  local progress = self.transitionTimer / self.transitionDuration
-  love.graphics.setColor(0.01, 0.008, 0.006, progress * 0.16)
-  love.graphics.rectangle('fill', 0, 0, width, height)
+  if self.flashTimer > 0 then
+    -- quick heat flare that fades out
+    local progress = self.flashTimer / self.flashDuration
+    love.graphics.setBlendMode('add')
+    love.graphics.setColor(1, 0.45, 0.12, progress * progress * 0.4)
+    love.graphics.rectangle('fill', 0, 0, width, height)
+    love.graphics.setBlendMode('alpha')
+  end
 end
 
 function MainMenu:moveSelection(direction)
@@ -771,6 +861,7 @@ function MainMenu:confirm()
   end
 
   playSound(self.selectSound)
+  self.flashTimer = self.flashDuration
   if self.selection == 1 then
     return 'new_game'
   elseif self.selection == 2 then
@@ -785,6 +876,10 @@ function MainMenu:confirm()
     self.quitSelection = 2
   end
 end
+
+----------------------------------------------------------------------
+-- Input
+----------------------------------------------------------------------
 
 function MainMenu:keypressed(key)
   if key == 'up' or key == 'w' then
@@ -970,9 +1065,13 @@ function MainMenu:drawCharacterSelectBackground(width, height)
     width / 2,
     height * 0.075,
     self.renderer.bigFont,
-    { 1, 0.68, 0.28 }
+    WARM
   )
 end
+
+----------------------------------------------------------------------
+-- Drawing helpers
+----------------------------------------------------------------------
 
 drawBackground = function(width, height, time, backgroundAlpha, particles, stageImage)
   local imageWidth, imageHeight = getImageDimensions(stageImage)
@@ -989,20 +1088,37 @@ drawBackground = function(width, height, time, backgroundAlpha, particles, stage
       imageWidth / 2,
       imageHeight / 2
     )
-    love.graphics.setColor(0.48, 0.45, 0.42, 0.16)
-    love.graphics.rectangle('fill', 0, 0, width, height)
   else
     love.graphics.setColor(0.035, 0.022, 0.018, 1)
     love.graphics.rectangle('fill', 0, 0, width, height)
   end
 
-  love.graphics.setColor(0.012, 0.009, 0.008, backgroundAlpha or 0.38)
+  -- darken, but less than before so the stage art still reads
+  love.graphics.setColor(0.012, 0.009, 0.008, backgroundAlpha or 0.3)
   love.graphics.rectangle('fill', 0, 0, width, height)
 
-  for _, particle in ipairs(particles or {}) do
-    local shimmer = 0.75 + math.sin(time * 2 + particle.y) * 0.25
-    love.graphics.setColor(1, 0.55, 0.24, particle.alpha * shimmer)
-    love.graphics.circle('fill', particle.x, particle.y, particle.size)
+  if particles then
+    -- warm glow rising from the bottom of the screen
+    love.graphics.setBlendMode('add')
+    local bands = 14
+    local bandHeight = height * 0.4 / bands
+    local pulse = 0.85 + math.sin(time * 1.3) * 0.15
+    for band = 0, bands - 1 do
+      local fade = (1 - band / bands)
+      love.graphics.setColor(0.9, 0.28, 0.05, fade * fade * 0.07 * pulse)
+      love.graphics.rectangle('fill', 0, height - (band + 1) * bandHeight, width, bandHeight + 1)
+    end
+
+    -- embers: additive so they actually glow
+    for _, particle in ipairs(particles) do
+      local shimmer = 0.7 + math.sin(time * 3 + particle.phase) * 0.3
+      local alpha = particle.alpha * shimmer
+      love.graphics.setColor(1, 0.4, 0.1, alpha * 0.35)
+      love.graphics.circle('fill', particle.x, particle.y, particle.size * 2.2)
+      love.graphics.setColor(1, 0.72, 0.3, alpha)
+      love.graphics.circle('fill', particle.x, particle.y, particle.size)
+    end
+    love.graphics.setBlendMode('alpha')
   end
 end
 
@@ -1020,6 +1136,11 @@ end
 
 drawFlame = function(x, y, time)
   local sway = math.sin(time * 7) * 2
+  local flicker = 0.85 + math.sin(time * 13) * 0.15
+  love.graphics.setBlendMode('add')
+  love.graphics.setColor(0.9, 0.3, 0.05, 0.22 * flicker)
+  love.graphics.circle('fill', x, y, 24)
+  love.graphics.setBlendMode('alpha')
   love.graphics.setColor(0.9, 0.25, 0.045, 0.28)
   love.graphics.ellipse('fill', x, y + 12, 20, 8)
   love.graphics.setColor(0.94, 0.31, 0.055, 1)
@@ -1038,6 +1159,31 @@ drawFlame = function(x, y, time)
     x + 2, y - 7,
     x + 5, y + 3
   )
+end
+
+-- Draws the title logo (image) centered at centerX/centerY, fitted inside
+-- maxWidth x maxHeight, with a flickering additive heat glow behind it.
+-- Returns false if the logo image isn't available.
+drawLogo = function(menu, centerX, centerY, maxWidth, maxHeight, glowAlpha)
+  local logo = menu.logo
+  if not logo then
+    return false
+  end
+  local scale = math.min(maxWidth / logo.width, maxHeight / logo.height)
+  local time = menu.animationTime
+  local flicker = 0.85 + 0.15 * math.sin(time * 9) * math.sin(time * 3.7)
+  local originX, originY = logo.width / 2, logo.height / 2
+
+  love.graphics.setBlendMode('add')
+  love.graphics.setColor(1, 0.3, 0.06, glowAlpha * 0.5 * flicker)
+  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale * 1.1, scale * 1.1, originX, originY)
+  love.graphics.setColor(1, 0.42, 0.1, glowAlpha * flicker)
+  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale * 1.04, scale * 1.04, originX, originY)
+  love.graphics.setBlendMode('alpha')
+
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale, scale, originX, originY)
+  return true
 end
 
 local function drawSectionNavigation(menu, width, height)
@@ -1072,6 +1218,10 @@ local function drawSectionNavigation(menu, width, height)
   end
 end
 
+----------------------------------------------------------------------
+-- Main draw
+----------------------------------------------------------------------
+
 function MainMenu:draw(input)
   love.graphics.setShader()
   local width = love.graphics.getWidth()
@@ -1083,57 +1233,69 @@ function MainMenu:draw(input)
   love.graphics.translate(offsetX, offsetY)
 
   if self.screen == 'title' then
-    local titleY = height * 0.35 + math.sin(self.animationTime * 1.6) * 7
-    drawScribble('HEAT DWELLER', centerX, titleY, self.titleFont, { 0.98, 0.84, 0.62 })
-    love.graphics.setColor(0.78, 0.31, 0.09, 0.88)
-    love.graphics.setLineWidth(3)
-    love.graphics.line(centerX - 190, titleY + 44, centerX - 90, titleY + 48,
-      centerX + 18, titleY + 42, centerX + 188, titleY + 46)
-    love.graphics.setLineWidth(1)
-    drawFlame(centerX - 218, height * 0.66, self.animationTime)
-    drawFlame(centerX + 218, height * 0.66, self.animationTime + 0.7)
+    local logoY = height * 0.36 + math.sin(self.animationTime * 1.6) * 5
+    local drewLogo = drawLogo(self, centerX, logoY, width * 0.56, height * 0.34, 0.22)
+    if not drewLogo then
+      -- fallback if the logo image is missing
+      drawScribble('HEAT DWELLER', centerX, logoY - 30, self.titleFont, { 0.98, 0.84, 0.62 })
+    end
+
+    drawFlame(centerX - 238, height * 0.66, self.animationTime)
+    drawFlame(centerX + 238, height * 0.66, self.animationTime + 0.7)
     love.graphics.setFont(self.optionFont)
-    love.graphics.setColor(1, 0.72, 0.34, 0.85 + math.sin(self.animationTime * 3) * 0.15)
+    local pulse = 0.8 + math.sin(self.animationTime * 3) * 0.2
+    love.graphics.setColor(1, 0.8, 0.42, pulse)
     love.graphics.printf('PRESS SPACE TO START', 0, height * 0.65, width, 'center')
-    drawSectionNavigation(self, width, height)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.setColor(0.75, 0.63, 0.49, 0.85)
     love.graphics.printf('KEYBOARD  /  RETRO GAMEPAD', 0, height - 42, width, 'center')
   else
-    local titleY = height * 0.055 + math.sin(self.animationTime * 1.6) * 2
-    drawScribble('HEAT DWELLER', centerX, titleY, self.renderer.bigFont, { 0.96, 0.84, 0.63 })
+    local headerY = height * 0.095
+    local drewLogo = drawLogo(self, centerX, headerY, width * 0.3, height * 0.115, 0.16)
+    if not drewLogo then
+      drawScribble('HEAT DWELLER', centerX, height * 0.055, self.renderer.bigFont, { 0.96, 0.84, 0.63 })
+    end
     drawSectionNavigation(self, width, height)
   end
 
   if self.screen == 'main' then
-    drawScribble('MAIN OPTIONS', centerX, height * 0.285, self.renderer.bigFont, { 1, 0.68, 0.28 })
+    drawScribble('MAIN OPTIONS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     self.optionY = {}
     local optionTop = height * 0.4
     for index, option in ipairs(menuOptions) do
       local y = optionTop + (index - 1) * 46
       self.optionY[index] = y
-      local color = index == 2 and not self.hasSave
-        and { 0.42, 0.37, 0.3 }
-        or index == self.selection and { 1, 0.68, 0.28 }
-        or { 0.87, 0.81, 0.68 }
       local selected = index == self.selection
+      local color
+      if index == 2 and not self.hasSave then
+        color = DISABLED
+      elseif selected then
+        color = HOT
+      else
+        color = DIM
+      end
       local hoverOffset = selected and math.sin(self.animationTime * 4) * 2 or 0
       if selected then
-        love.graphics.setColor(0.95, 0.31, 0.08, 0.12 + math.sin(self.animationTime * 3) * 0.04)
-        love.graphics.rectangle('fill', centerX - 190, y - 6, 380, 38, 8, 8)
+        local glow = 0.16 + math.sin(self.animationTime * 3) * 0.05
+        love.graphics.setBlendMode('add')
+        love.graphics.setColor(0.95, 0.31, 0.08, glow)
+        love.graphics.rectangle('fill', centerX - 200, y - 6, 400, 38, 8, 8)
+        love.graphics.setColor(0.95, 0.4, 0.1, glow * 0.7)
+        love.graphics.rectangle('fill', centerX - 200, y + 28, 400, 3)
+        love.graphics.setBlendMode('alpha')
       end
       love.graphics.push()
-      love.graphics.translate(centerX + (selected and 5 or 0), y + hoverOffset)
-      love.graphics.scale(selected and 1.04 or 1, selected and 1.04 or 1)
+      love.graphics.translate(centerX + (selected and 6 or 0), y + hoverOffset)
+      love.graphics.scale(selected and 1.08 or 1, selected and 1.08 or 1)
       drawScribble(option, 0, 0, self.optionFont, color)
       love.graphics.pop()
     end
-    drawFlame(centerX - 195, self.cursorY == 0 and self.optionY[self.selection] or self.cursorY, self.animationTime)
+    drawFlame(centerX - 205, self.cursorY == 0 and self.optionY[self.selection] or self.cursorY, self.animationTime)
     love.graphics.setColor(0.68, 0.55, 0.39, 0.82)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf('UP / DOWN / D-PAD - CHOOSE     ENTER / A - SELECT     ESC / B - BACK', 0, height - 42, width, 'center')
   elseif self.screen == 'options' then
-    drawScribble('OPTIONS / SETTINGS', centerX, height * 0.285, self.renderer.bigFont, { 1, 0.68, 0.28 })
+    drawScribble('OPTIONS / SETTINGS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     self.optionRects = {}
     local rowWidth = math.min(520, width - 48)
     local rowX = centerX - rowWidth / 2
@@ -1145,11 +1307,17 @@ function MainMenu:draw(input)
       self.optionRects[index] = rect
       local selected = index == self.settingsSelection
       if selected then
-        love.graphics.setColor(0.95, 0.31, 0.08, 0.16)
+        love.graphics.setBlendMode('add')
+        love.graphics.setColor(0.95, 0.31, 0.08, 0.2)
         love.graphics.rectangle('fill', rect.x, rect.y, rect.width, rect.height, 6, 6)
+        love.graphics.setBlendMode('alpha')
       end
       love.graphics.setFont(self.renderer.smallFont)
-      love.graphics.setColor(selected and 1 or 0.88, selected and 0.72 or 0.78, selected and 0.37 or 0.65, 1)
+      if selected then
+        love.graphics.setColor(1, 0.86, 0.5, 1)
+      else
+        love.graphics.setColor(0.7, 0.62, 0.5, 1)
+      end
       love.graphics.printf(option, rect.x + 14, y + 8, rowWidth * 0.45, 'left')
       if selected then
         drawFlame(rect.x - 14, y + rowHeight / 2, self.animationTime)
@@ -1176,7 +1344,7 @@ function MainMenu:draw(input)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf('LEFT / RIGHT ADJUST     ENTER TO TOGGLE     ESC / B BACK', 0, height - 42, width, 'center')
   elseif self.screen == 'extras' then
-    drawScribble('EXTRAS / STATS', centerX, height * 0.285, self.renderer.bigFont, { 1, 0.68, 0.28 })
+    drawScribble('EXTRAS / STATS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.setColor(0.95, 0.87, 0.73, 1)
     love.graphics.printf('RUNS STARTED: ' .. tostring(self.extrasData.runsStarted or 0)
@@ -1221,7 +1389,7 @@ function MainMenu:draw(input)
     drawScribble('ARE YOU SURE YOU WANT TO QUIT?', centerX, boxY + 32, self.renderer.smallFont, { 1, 0.84, 0.63 })
     for index, option in ipairs(quitOptions) do
       local x = centerX + (index == 1 and -100 or 100)
-      local color = index == self.quitSelection and { 1, 0.68, 0.28 } or { 0.87, 0.81, 0.68 }
+      local color = index == self.quitSelection and HOT or DIM
       drawScribble(option, x, boxY + 105, self.renderer.smallFont, color)
     end
     love.graphics.setColor(0.68, 0.55, 0.39, 0.9)
