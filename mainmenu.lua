@@ -703,7 +703,7 @@ function MainMenu:update(dt)
   end
 
   if self.screen == 'main' then
-    local targetY = screenHeight * 0.4 + (self.selection - 1) * 46
+    local targetY = screenHeight * 0.45 + (self.selection - 1) * 46
     if self.cursorY == 0 then
       self.cursorY = targetY
     else
@@ -1093,12 +1093,10 @@ drawBackground = function(width, height, time, backgroundAlpha, particles, stage
     love.graphics.rectangle('fill', 0, 0, width, height)
   end
 
-  -- darken, but less than before so the stage art still reads
   love.graphics.setColor(0.012, 0.009, 0.008, backgroundAlpha or 0.3)
   love.graphics.rectangle('fill', 0, 0, width, height)
 
   if particles then
-    -- warm glow rising from the bottom of the screen
     love.graphics.setBlendMode('add')
     local bands = 14
     local bandHeight = height * 0.4 / bands
@@ -1109,7 +1107,6 @@ drawBackground = function(width, height, time, backgroundAlpha, particles, stage
       love.graphics.rectangle('fill', 0, height - (band + 1) * bandHeight, width, bandHeight + 1)
     end
 
-    -- embers: additive so they actually glow
     for _, particle in ipairs(particles) do
       local shimmer = 0.7 + math.sin(time * 3 + particle.phase) * 0.3
       local alpha = particle.alpha * shimmer
@@ -1161,9 +1158,6 @@ drawFlame = function(x, y, time)
   )
 end
 
--- Draws the title logo (image) centered at centerX/centerY, fitted inside
--- maxWidth x maxHeight, with a flickering additive heat glow behind it.
--- Returns false if the logo image isn't available.
 drawLogo = function(menu, centerX, centerY, maxWidth, maxHeight, glowAlpha)
   local logo = menu.logo
   if not logo then
@@ -1186,38 +1180,6 @@ drawLogo = function(menu, centerX, centerY, maxWidth, maxHeight, glowAlpha)
   return true
 end
 
-local function drawSectionNavigation(menu, width, height)
-  local sections = {
-    { label = 'TITLE', screen = 'title' },
-    { label = 'MAIN OPTIONS', screen = 'main' },
-    { label = 'SETTINGS', screen = 'options' },
-    { label = 'EXTRAS / STATS', screen = 'extras' },
-  }
-  local activeScreen = menu.screen == 'quit' and 'main' or menu.screen
-  local navY = height * 0.19
-  local slotWidth = math.min(210, (width - 40) / #sections)
-  local startX = (width - slotWidth * #sections) / 2
-
-  love.graphics.setFont(menu.renderer.smallFont)
-  for index, section in ipairs(sections) do
-    local x = startX + (index - 1) * slotWidth
-    local selected = section.screen == activeScreen
-    if selected then
-      love.graphics.setColor(0.68, 0.24, 0.07, 0.35)
-      love.graphics.rectangle('fill', x + 4, navY - 5, slotWidth - 8, 30, 5, 5)
-      love.graphics.setColor(0.98, 0.49, 0.16, 0.9)
-      love.graphics.rectangle('fill', x + 12, navY + 23, slotWidth - 24, 2)
-    end
-    love.graphics.setColor(
-      selected and 1 or 0.75,
-      selected and 0.72 or 0.62,
-      selected and 0.38 or 0.48,
-      selected and 1 or 0.82
-    )
-    love.graphics.printf(section.label, x, navY + 3, slotWidth, 'center')
-  end
-end
-
 ----------------------------------------------------------------------
 -- Main draw
 ----------------------------------------------------------------------
@@ -1236,7 +1198,6 @@ function MainMenu:draw(input)
     local logoY = height * 0.36 + math.sin(self.animationTime * 1.6) * 5
     local drewLogo = drawLogo(self, centerX, logoY, width * 0.56, height * 0.34, 0.22)
     if not drewLogo then
-      -- fallback if the logo image is missing
       drawScribble('HEAT DWELLER', centerX, logoY - 30, self.titleFont, { 0.98, 0.84, 0.62 })
     end
 
@@ -1250,20 +1211,19 @@ function MainMenu:draw(input)
     love.graphics.setColor(0.75, 0.63, 0.49, 0.85)
     love.graphics.printf('KEYBOARD  /  RETRO GAMEPAD', 0, height - 42, width, 'center')
   else
-    local headerY = height * 0.095
-    local drewLogo = drawLogo(self, centerX, headerY, width * 0.3, height * 0.115, 0.16)
+    -- TBoI-style clean fixed logo banner at top, leaving room for the menu below
+    local headerY = height * 0.16
+    local drewLogo = drawLogo(self, centerX, headerY, width * 0.38, height * 0.14, 0.2)
     if not drewLogo then
-      drawScribble('HEAT DWELLER', centerX, height * 0.055, self.renderer.bigFont, { 0.96, 0.84, 0.63 })
+      drawScribble('HEAT DWELLER', centerX, height * 0.12, self.renderer.bigFont, { 0.96, 0.84, 0.63 })
     end
-    drawSectionNavigation(self, width, height)
   end
 
   if self.screen == 'main' then
-    drawScribble('MAIN OPTIONS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     self.optionY = {}
-    local optionTop = height * 0.4
+    local optionTop = height * 0.42
     for index, option in ipairs(menuOptions) do
-      local y = optionTop + (index - 1) * 46
+      local y = optionTop + (index - 1) * 48
       self.optionY[index] = y
       local selected = index == self.selection
       local color

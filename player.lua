@@ -12,6 +12,7 @@ function Player.new(config)
     height = config.height or 64,
     speed = config.speed or 240,
     baseSpeed = config.speed or 240,
+    acceleration = config.acceleration or 13, -- Controls slippery drift (lower = more slide)
     frameSpeed = config.frameSpeed or 0.08,
     blinkDuration = config.blinkDuration or 0.12,
     blinkInterval = config.blinkInterval or 2.5,
@@ -205,15 +206,27 @@ function Player:update(dt, input, world)
 
   local directionLength = math.sqrt(directionX * directionX + directionY * directionY)
   self.moving = directionLength > 0
+
+  -- Calculate target velocity based on input
+  local targetVx = 0
+  local targetVy = 0
   if directionLength > 0 then
     directionX = directionX / directionLength
     directionY = directionY / directionLength
-    self.velocityX = directionX * self.speed + self.recoilVelocityX
-    self.velocityY = directionY * self.speed + self.recoilVelocityY
-  else
-    self.velocityX = self.recoilVelocityX
-    self.velocityY = self.recoilVelocityY
+    targetVx = directionX * self.speed
+    targetVy = directionY * self.speed
   end
+
+  -- Smoothly slide (interpolate) velocity toward target velocity for the drift effect
+  local accel = self.acceleration or 12
+  local baseVelocityX = self.velocityX - self.recoilVelocityX
+  local baseVelocityY = self.velocityY - self.recoilVelocityY
+  
+  baseVelocityX = baseVelocityX + (targetVx - baseVelocityX) * math.min(1, accel * dt)
+  baseVelocityY = baseVelocityY + (targetVy - baseVelocityY) * math.min(1, accel * dt)
+
+  self.velocityX = baseVelocityX + self.recoilVelocityX
+  self.velocityY = baseVelocityY + self.recoilVelocityY
 
   local nextX = self.x + self.velocityX * dt
   local nextY = self.y + self.velocityY * dt

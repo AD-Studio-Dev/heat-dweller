@@ -186,6 +186,148 @@ local function floorTypeForIndex(index)
   return FLOOR_TYPES[index]
 end
 
+-- Tile floor ("Base + Decal"): each floor type can have a base tile at
+-- resources/gfx/tiles/<floorType>_tile.png. Floors without one yet fall back
+-- to the old procedural grid. Overlay decals are shared and stamped per room.
+local TILE_DIRECTORY = 'resources/gfx/tiles/'
+local TILE_OVERLAY_DIRECTORY = TILE_DIRECTORY .. 'overlays/'
+local TILE_DECAL_CHANCE = 0.10
+-- Per-floor decal settings. `only` lists filename keywords of the overlays that
+-- floor may use (nil = every overlay); `chance` overrides TILE_DECAL_CHANCE.
+-- Entries match the overlay id in `tileoverlay_NNN_<id>.png` exactly (a trailing
+-- 's' is ignored, so 'eye' matches eyes and 'crack' matches cracks but never
+-- flowercracks). An empty list means no decals at all on that floor.
+local TILE_FLOOR_DECALS = {
+  basement    = { only = { 'cracks', 'flowercracks', 'mold', 'vomit', 'eye', 'flower' } },
+  kitchen     = { only = { 'cracks', 'vomit', 'eye' }, chance = 0.05 },
+  living_room = { only = { 'mold', 'vomit', 'eye' } },
+  bedroom     = { only = { 'mold', 'vomit', 'eye' } },
+  attic       = { only = { 'cracks', 'eye', 'spiderweb' } },
+  roof        = { only = { 'cracks', 'vomit', 'eye' } },
+  sky         = { only = {}, chance = 0 },
+}
+local CLOUD_IMAGE_PATH = 'resources/gfx/ui/stage/cloud.png'
+local cloudImage = nil
+
+local function normalizeOverlayId(id)
+  return (tostring(id):lower():gsub('s$', ''))
+end
+-- Rarer decals by filename keyword; anything unmatched has weight 1.
+local TILE_OVERLAY_WEIGHTS = { eye = 0.4, vomit = 0.6, flower = 0.7 }
+local floorTileImages = {}
+local tileOverlays = {}
+local roomDecalCache = setmetatable({}, { __mode = 'k' })
+
+local function loadTileAssets()
+  floorTileImages = {}
+  for _, floorType in ipairs(FLOOR_TYPES) do
+    local path = TILE_DIRECTORY .. floorType .. '_tile.png'
+    if not love.filesystem.getInfo(path) and floorType == 'living_room' then
+      path = TILE_DIRECTORY .. 'livingroom_tile.png'
+    end
+    if love.filesystem.getInfo(path) then
+      local image = love.graphics.newImage(path)
+      image:setFilter('nearest', 'nearest')
+      floorTileImages[floorType] = image
+    end
+  end
+
+  cloudImage = nil
+  if love.filesystem.getInfo(CLOUD_IMAGE_PATH) then
+    cloudImage = love.graphics.newImage(CLOUD_IMAGE_PATH)
+    cloudImage:setFilter('nearest', 'nearest')
+  end
+
+  tileOverlays = {}
+  local files = love.filesystem.getDirectoryItems(TILE_OVERLAY_DIRECTORY)
+  table.sort(files)
+  for _, file in ipairs(files) do
+    if file:lower():match('%.png$') then
+      local image = love.graphics.newImage(TILE_OVERLAY_DIRECTORY .. file)
+      image:setFilter('nearest', 'nearest')
+      local weight = 1
+      for keyword, keywordWeight in pairs(TILE_OVERLAY_WEIGHTS) do
+        if file:lower():find(keyword, 1, true) then
+          weight = keywordWeight
+        end
+      end
+      local id = file:lower():match('^tileoverlay_%d+_(.+)%.png$') or file:lower():gsub('%.png$', '')
+      tileOverlays[#tileOverlays + 1] = {
+        image = image, weight = weight, name = file, id = normalizeOverlayId(id),
+      }
+    end
+  end
+end
+
+-- Pseudo-random decals for one room, seeded by run seed + floor + room id so a
+-- room looks the same every visit and after Continue (nothing goes in the save).
+local function generateRoomDecals(room)
+  local decals = {}
+  if not room or room.shop or room.cultistDeal or #tileOverlays == 0 then
+    return decals
+  end
+
+  local seed = ((runSeed or 0) * 31 + (world.floorIndex or 1) * 7919
+    + (room.id or 0) * 104729) % 2147483646 + 1
+  local rng = love.math.newRandomGenerator(seed)
+  local floorSettings = TILE_FLOOR_DECALS[world.floorType] or {}
+  local decalChance = floorSettings.chance or TILE_DECAL_CHANCE
+  local overlays = {}
+  for _, overlay in ipairs(tileOverlays) do
+    local allowed = floorSettings.only == nil
+    for _, keyword in ipairs(floorSettings.only or {}) do
+      if overlay.id == normalizeOverlayId(keyword) then
+        allowed = true
+        break
+      end
+    end
+    if allowed then
+      overlays[#overlays + 1] = overlay
+    end
+  end
+  if #overlays == 0 then
+    return decals
+  end
+  local totalWeight = 0
+  for _, overlay in ipairs(overlays) do
+    totalWeight = totalWeight + overlay.weight
+  end
+
+  local tileSize = world.tileSize
+  for row = 0, math.ceil(world.height / tileSize) - 1 do
+    for column = 0, math.ceil(world.width / tileSize) - 1 do
+      if rng:random() < decalChance then
+        local pick = rng:random() * totalWeight
+        local chosen = overlays[#overlays]
+        for _, overlay in ipairs(overlays) do
+          pick = pick - overlay.weight
+          if pick <= 0 then
+            chosen = overlay
+            break
+          end
+        end
+        decals[#decals + 1] = {
+          image = chosen.image,
+          x = column * tileSize,
+          y = row * tileSize,
+          flip = rng:random() < 0.5,
+          alpha = 0.75 + rng:random() * 0.25,
+        }
+      end
+    end
+  end
+  return decals
+end
+
+local function getRoomDecals(room)
+  local decals = roomDecalCache[room]
+  if not decals then
+    decals = generateRoomDecals(room)
+    roomDecalCache[room] = decals
+  end
+  return decals
+end
+
 local function generateCurrentFloorRooms(seed)
   local floorType = floorTypeForIndex(world.floorIndex)
   assert(floorType and floorType == world.floorType,
@@ -224,6 +366,16 @@ local function hardStopMusicSources()
       source:setVolume(0)
     end
   end
+end
+
+-- Boss music sources get muted by hardStopMusicSources() (boss death, floor
+-- change, restart) and by pauseGameAudio() (item pickups), and nothing else
+-- ever turned them back up, so the next boss intro played silently. Call this
+-- right before any boss track is started.
+local function restoreBossMusicVolumes()
+  if bossIntroMusic then bossIntroMusic:setVolume(audioMusicVolume) end
+  if bossActiveStartMusic then bossActiveStartMusic:setVolume(audioMusicVolume) end
+  if bossLoopMusic then bossLoopMusic:setVolume(audioMusicVolume) end
 end
 
 local function unlockBossRoom()
@@ -716,12 +868,13 @@ function love.load()
 
   love.graphics.setDefaultFilter('nearest', 'nearest')
   love.window.setTitle('Heat Dweller')
+  loadTileAssets()
   initializeProfileAndItems()
 
   world = {
     width = 1280,
     height = 960,
-    tileSize = 80,
+    tileSize = 64,
     roomType = 'basement',
     floorType = 'basement',
     floorIndex = 1,
@@ -1172,6 +1325,7 @@ continueRun = function()
     bossMusicPhase = 'loop'
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
+    restoreBossMusicVolumes()
     bossLoopMusic:play()
   elseif world.floorType == 'kitchen' then
     stopBasementMusic(false)
@@ -1231,6 +1385,27 @@ local function updateSweatCombat(dt, targets)
       player.stats.dollars = player.stats.dollars + 3
     elseif not target.geometricPart then
       player.stats.dollars = player.stats.dollars + 1
+    end
+  end
+end
+
+-- Crawler and Lil' Snake only move; unlike the other enemies they never touched
+-- the player. Damage the player when they overlap: a Crawler hit or a Lil' Snake
+-- head hit costs a full heart (boss damage), a Lil' Snake body hit costs half.
+local function applyBossContactDamage()
+  if not player or player.stats.health <= 0 then
+    return
+  end
+  if crawler and crawler.alive and not crawler.deathSequence
+      and crawler:touchesPlayer(player) then
+    player:takeDamage(nil, 'boss')
+  end
+  if lilSnake and lilSnake.alive and not lilSnake.deathSequence then
+    local part = lilSnake:touchesPlayer(player)
+    if part == 'head' then
+      player:takeDamage(nil, 'boss')
+    elseif part == 'body' then
+      player:takeDamage(10)
     end
   end
 end
@@ -1295,6 +1470,7 @@ function love.update(dt)
     bossIntroTimer = bossIntroTimer + dt
     if bossIntroTimer >= 1.8 then
       bossIntroMusic:stop()
+      restoreBossMusicVolumes()
       bossActiveStartMusic:play()
       bossMusicPhase = 'active_start'
       gameState = 'playing'
@@ -1437,6 +1613,7 @@ function love.update(dt)
       babyWidow = nil
     end
   end
+  applyBossContactDamage()
   if player.stats.health <= 0 then
     gameState = 'game_over'
     hardStopMusicSources()
@@ -2456,66 +2633,110 @@ function drawWorld()
   local floorType = world.floorType
   local animationTime = love.timer.getTime()
   if floorType == 'sky' then
-    love.graphics.setColor(0.8, 0.91, 1, 0.28)
     for index = 1, 8 do
       local cloudX = (index * 183 + animationTime * 12 - camera.x * 0.3) % (world.width + 240) - 120
       local cloudY = 100 + (index * 137) % (world.height - 200)
-      love.graphics.ellipse('fill', cloudX, cloudY, 96, 24)
-      love.graphics.circle('fill', cloudX - 42, cloudY - 10, 25)
-      love.graphics.circle('fill', cloudX + 32, cloudY - 14, 32)
+      if cloudImage then
+        local cloudWidth, cloudHeight = cloudImage:getDimensions()
+        local targetWidth = 150 + (index * 37) % 90
+        local cloudScale = targetWidth / cloudWidth
+        love.graphics.setColor(1, 1, 1, 0.6)
+        love.graphics.draw(cloudImage, cloudX, cloudY, 0,
+          (index % 2 == 0 and -1 or 1) * cloudScale, cloudScale,
+          cloudWidth / 2, cloudHeight / 2)
+      else
+        love.graphics.setColor(0.8, 0.91, 1, 0.28)
+        love.graphics.ellipse('fill', cloudX, cloudY, 96, 24)
+        love.graphics.circle('fill', cloudX - 42, cloudY - 10, 25)
+        love.graphics.circle('fill', cloudX + 32, cloudY - 14, 32)
+      end
     end
   end
 
-  for x = 0, world.width, tileSize do
-    for y = 0, world.height, tileSize do
-      local alternating = (x / tileSize + y / tileSize) % 2 == 0
-      if isShop then
-        love.graphics.setColor(0.25 + (alternating and 0.03 or 0), 0.18, 0.08, 1)
-      elseif isCultistDeal then
-        love.graphics.setColor(0.18, 0.07 + (alternating and 0.025 or 0), 0.16, 1)
-      elseif floorType == 'kitchen' then
-        local shade = alternating and 0.035 or -0.015
-        love.graphics.setColor(
-          palette.tile[1] + shade, palette.tile[2] + shade, palette.tile[3] + shade, 1
-        )
-      elseif floorType == 'sky' then
-        love.graphics.setColor(palette.tile[1], palette.tile[2], palette.tile[3], 0.18)
-      else
-        local stripe = (y / tileSize) % 2 == 0 and 0.025 or 0
-        if floorType == 'bedroom' then
-          stripe = alternating and 0.025 or -0.012
-        end
-        love.graphics.setColor(
-          palette.tile[1] + stripe,
-          palette.tile[2] + stripe,
-          palette.tile[3] + stripe,
-          1
-        )
+  local floorTileImage = floorTileImages[floorType]
+  if floorTileImage then
+    -- Base tile first, tinted for special rooms, then the room's decals on top.
+    local tint = { 1, 1, 1 }
+    if isShop then
+      tint = { 1, 0.82, 0.55 }
+    elseif isCultistDeal then
+      tint = { 0.85, 0.5, 0.8 }
+    end
+    local imageWidth, imageHeight = floorTileImage:getDimensions()
+    local scaleX, scaleY = tileSize / imageWidth, tileSize / imageHeight
+    love.graphics.setColor(tint[1], tint[2], tint[3], 1)
+    for y = 0, world.height - 1, tileSize do
+      for x = 0, world.width - 1, tileSize do
+        love.graphics.draw(floorTileImage, x, y, 0, scaleX, scaleY)
       end
-      if floorType == 'sky' then
-        love.graphics.rectangle('line', x + 1, y + 1, tileSize - 2, tileSize - 2)
-      else
-        love.graphics.rectangle('fill', x + 2, y + 2, tileSize - 4, tileSize - 4)
-        love.graphics.setColor(0.055, 0.06, 0.065, 0.52)
-        love.graphics.rectangle('line', x + 1, y + 1, tileSize - 2, tileSize - 2)
-      end
-
-      if floorType == 'living_room' or floorType == 'attic' then
-        love.graphics.setColor(0.08, 0.045, 0.025, floorType == 'attic' and 0.45 or 0.32)
-        love.graphics.line(x + 4, y + tileSize / 2, x + tileSize - 4, y + tileSize / 2)
-        if (x / tileSize + y / tileSize) % 2 == 0 then
-          love.graphics.line(x + tileSize / 2, y + 4, x + tileSize / 2, y + tileSize / 2)
+    end
+    for _, decal in ipairs(getRoomDecals(currentRoom)) do
+      local decalWidth, decalHeight = decal.image:getDimensions()
+      love.graphics.setColor(1, 1, 1, decal.alpha)
+      love.graphics.draw(
+        decal.image,
+        decal.x + tileSize / 2,
+        decal.y + tileSize / 2,
+        0,
+        (decal.flip and -1 or 1) * tileSize / decalWidth,
+        tileSize / decalHeight,
+        decalWidth / 2,
+        decalHeight / 2
+      )
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+  else
+    for x = 0, world.width, tileSize do
+      for y = 0, world.height, tileSize do
+        local alternating = (x / tileSize + y / tileSize) % 2 == 0
+        if isShop then
+          love.graphics.setColor(0.25 + (alternating and 0.03 or 0), 0.18, 0.08, 1)
+        elseif isCultistDeal then
+          love.graphics.setColor(0.18, 0.07 + (alternating and 0.025 or 0), 0.16, 1)
+        elseif floorType == 'kitchen' then
+          local shade = alternating and 0.035 or -0.015
+          love.graphics.setColor(
+            palette.tile[1] + shade, palette.tile[2] + shade, palette.tile[3] + shade, 1
+          )
+        elseif floorType == 'sky' then
+          love.graphics.setColor(palette.tile[1], palette.tile[2], palette.tile[3], 0.18)
         else
-          love.graphics.line(x + tileSize / 2, y + tileSize / 2, x + tileSize / 2, y + tileSize - 4)
+          local stripe = (y / tileSize) % 2 == 0 and 0.025 or 0
+          if floorType == 'bedroom' then
+            stripe = alternating and 0.025 or -0.012
+          end
+          love.graphics.setColor(
+            palette.tile[1] + stripe,
+            palette.tile[2] + stripe,
+            palette.tile[3] + stripe,
+            1
+          )
         end
-      elseif floorType == 'roof' then
-        love.graphics.setColor(0.035, 0.045, 0.06, 0.55)
-        love.graphics.line(x + 5, y + tileSize / 2, x + tileSize - 5, y + tileSize / 2)
-        love.graphics.line(x + tileSize / 2, y + tileSize / 2, x + tileSize / 2, y + tileSize - 4)
-      elseif floorType == 'bedroom' then
-        love.graphics.setColor(0.8, 0.72, 0.78, 0.17)
-        for dotX = x + 12, x + tileSize - 12, 20 do
-          love.graphics.circle('fill', dotX, y + tileSize / 2, 1.5)
+        if floorType == 'sky' then
+          love.graphics.rectangle('line', x + 1, y + 1, tileSize - 2, tileSize - 2)
+        else
+          love.graphics.rectangle('fill', x + 2, y + 2, tileSize - 4, tileSize - 4)
+          love.graphics.setColor(0.055, 0.06, 0.065, 0.52)
+          love.graphics.rectangle('line', x + 1, y + 1, tileSize - 2, tileSize - 2)
+        end
+
+        if floorType == 'living_room' or floorType == 'attic' then
+          love.graphics.setColor(0.08, 0.045, 0.025, floorType == 'attic' and 0.45 or 0.32)
+          love.graphics.line(x + 4, y + tileSize / 2, x + tileSize - 4, y + tileSize / 2)
+          if (x / tileSize + y / tileSize) % 2 == 0 then
+            love.graphics.line(x + tileSize / 2, y + 4, x + tileSize / 2, y + tileSize / 2)
+          else
+            love.graphics.line(x + tileSize / 2, y + tileSize / 2, x + tileSize / 2, y + tileSize - 4)
+          end
+        elseif floorType == 'roof' then
+          love.graphics.setColor(0.035, 0.045, 0.06, 0.55)
+          love.graphics.line(x + 5, y + tileSize / 2, x + tileSize - 5, y + tileSize / 2)
+          love.graphics.line(x + tileSize / 2, y + tileSize / 2, x + tileSize / 2, y + tileSize - 4)
+        elseif floorType == 'bedroom' then
+          love.graphics.setColor(0.8, 0.72, 0.78, 0.17)
+          for dotX = x + 12, x + tileSize - 12, 20 do
+            love.graphics.circle('fill', dotX, y + tileSize / 2, 1.5)
+          end
         end
       end
     end
@@ -2580,11 +2801,19 @@ function drawWorld()
         love.graphics.line(34, 48, 34, world.height - 48)
         love.graphics.line(world.width - 34, 48, world.width - 34, world.height - 48)
       elseif style == 'cloud' then
-        love.graphics.setColor(0.86, 0.95, 1, 0.7)
         local cloudX = (decoration.x + animationTime * 9 - camera.x * 0.35) % (world.width + 240) - 120
-        love.graphics.ellipse('fill', cloudX, decoration.y, 90 * decoration.scale, 28 * decoration.scale)
-        love.graphics.circle('fill', cloudX - 35, decoration.y - 8, 24 * decoration.scale)
-        love.graphics.circle('fill', cloudX + 32, decoration.y - 12, 30 * decoration.scale)
+        if cloudImage then
+          local cloudWidth, cloudHeight = cloudImage:getDimensions()
+          local cloudScale = 180 * decoration.scale / cloudWidth
+          love.graphics.setColor(1, 1, 1, 0.85)
+          love.graphics.draw(cloudImage, cloudX, decoration.y, 0, cloudScale, cloudScale,
+            cloudWidth / 2, cloudHeight / 2)
+        else
+          love.graphics.setColor(0.86, 0.95, 1, 0.7)
+          love.graphics.ellipse('fill', cloudX, decoration.y, 90 * decoration.scale, 28 * decoration.scale)
+          love.graphics.circle('fill', cloudX - 35, decoration.y - 8, 24 * decoration.scale)
+          love.graphics.circle('fill', cloudX + 32, decoration.y - 12, 30 * decoration.scale)
+        end
       end
     end
 
@@ -2972,6 +3201,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
     bossLoopMusic:stop()
+    restoreBossMusicVolumes()
     bossIntroMusic:play()
     bossMusicPhase = 'title'
     bossIntroTimer = 0
@@ -3594,6 +3824,7 @@ function resumePausedAudio()
 
   local activeBoss = crawler or lilSnake or geometric or stuffing
   if currentRoom and currentRoom.boss and activeBoss and activeBoss.alive then
+    restoreBossMusicVolumes()
     if bossMusicPhase == 'active_start' then
       bossActiveStartMusic:play()
       bossLoopMusic:setVolume(0)

@@ -54,6 +54,23 @@ function Crawler.new(world)
   }, Crawler)
 end
 
+-- A rush used to be exactly one lap, so the Crawler stopped on the spot it
+-- started from every time. Pick a random distance instead (35%-165% of a lap),
+-- skipping values near one full lap so it never lands where it left.
+function Crawler:pickRushDistance()
+  local laps
+  repeat
+    laps = 0.35 + math.random() * 1.3
+  until math.abs(laps - 1) >= 0.15
+  return self.perimeterLength * laps
+end
+
+function Crawler:touchesPlayer(player)
+  local offsetX, offsetY = player.x - self.x, player.y - self.y
+  local reach = self.width * 0.45 + player.width * 0.3
+  return offsetX * offsetX + offsetY * offsetY <= reach * reach
+end
+
 function Crawler:beginPhaseTwo()
   if not self.alive or self.phase >= 2 then
     return
@@ -119,7 +136,7 @@ function Crawler:update(dt)
             self.phaseStateTimer = randomizedDuration(self.chargeBaseDuration)
           elseif self.phaseState == 'charging' or self.phaseState == 'exhausted' then
             self.phaseState = 'wall_running'
-            self.rushDistanceRemaining = self.perimeterLength
+            self.rushDistanceRemaining = self:pickRushDistance()
             local rushDuration = randomizedDuration(self.rushBaseDuration)
             self.rushSpeed = self.perimeterLength / rushDuration
           end

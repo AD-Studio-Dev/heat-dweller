@@ -248,6 +248,27 @@ function LilSnake:update(dt, player)
   end
 end
 
+-- Returns 'head', 'body' or nil depending on what part of the snake overlaps
+-- the player.
+function LilSnake:touchesPlayer(player)
+  local playerRadius = player.width * 0.3
+  local headReach = self.width * 0.38 + playerRadius
+  local offsetX, offsetY = player.x - self.x, player.y - self.y
+  if offsetX * offsetX + offsetY * offsetY <= headReach * headReach then
+    return 'head'
+  end
+
+  local bodyReach = 28 + playerRadius
+  for index = 1, self.segmentCount do
+    local segment = self:getSegmentPosition(index)
+    local segmentX, segmentY = player.x - segment.x, player.y - segment.y
+    if segmentX * segmentX + segmentY * segmentY <= bodyReach * bodyReach then
+      return 'body'
+    end
+  end
+  return nil
+end
+
 local function getBodyFrame(direction, frame)
   if direction == 'up' then
     return frame == 1 and LilSnake.frames.bodyUp or LilSnake.frames.bodyUpAlt
