@@ -10,6 +10,11 @@ local directions = {
   up = { x = 0, y = -1 },
 }
 
+-- Fire Extinguisher damage per second, as a multiple of the player's damage stat.
+-- Brimstone-style: much stronger than the sweat shot (~11.6 dps at base stats,
+-- so 2.5 x 20 = 50 dps is roughly 4x), but nowhere near the old 15x (300 dps).
+local DAMAGE_PER_SECOND_MULTIPLIER = 2.5
+
 function FireFoam.new()
   return setmetatable({ beam = nil, animationTime = 0 }, FireFoam)
 end
@@ -96,9 +101,13 @@ function FireFoam:update(dt, player, equipped, directionName, targets, world, wa
         nearestTarget:onDamaged()
       end
     end
-    local damagePerSecond = math.max(0, player.stats.damage) * 15
+    local damagePerSecond = math.max(0, player.stats.damage) * DAMAGE_PER_SECOND_MULTIPLIER
     local defeatedTarget
-    if nearestTarget.takeDamage then
+    if nearestTarget.takeContinuousDamage then
+      -- Targets with armor or hit stacking (the Stationary Angel) must not treat
+      -- every frame of foam as a separate hit.
+      defeatedTarget = nearestTarget:takeContinuousDamage(damagePerSecond * dt)
+    elseif nearestTarget.takeDamage then
       defeatedTarget = nearestTarget:takeDamage(damagePerSecond * dt)
     else
       nearestTarget.health = nearestTarget.health - damagePerSecond * dt

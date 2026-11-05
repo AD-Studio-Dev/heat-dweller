@@ -10,6 +10,7 @@ local Scar = require('scar')
 local Spider = require('spider')
 local Fly = require('fly')
 local Centipede = require('centipede')
+local StationaryAngel = require('stationary_angel')
 local Crawler = require('crawler')
 local LilSnake = require('lil_snake')
 local TheGeometric = require('the_geometric')
@@ -1074,6 +1075,9 @@ saveRun = function()
     'stateTimer', 'dashDirectionX', 'dashDirectionY',
     'driftAngle', 'driftTargetX', 'driftTargetY', 'driftTimer',
     'velocityX', 'velocityY',
+    -- Stationary Angel (Sky floor only)
+    'maxHealth', 'lastHealth', 'roomTimer', 'attackState', 'attackTimer',
+    'beamX', 'beamIndex', 'telegraphDuration', 'hitStack', 'hitStackTimer',
   }
   local savedEnemies = {}
   for index, enemy in ipairs(enemies) do
@@ -3103,6 +3107,7 @@ function spawnRoomEnemies(room)
     return
   end
 
+  local angelCount = 0
   for _, definition in ipairs(room.enemies) do
     local enemy
     if definition.type == 'scar' then
@@ -3113,6 +3118,13 @@ function spawnRoomEnemies(room)
       enemy = Fly:new(definition.x, definition.y)
     elseif definition.type == 'centipede' then
       enemy = Centipede.new(definition)
+    elseif definition.type == 'stationaryangel' then
+      -- Strictly a Sky-floor enemy, never more than MAX_PER_ROOM (4) at once.
+      if StationaryAngel.isAllowedOn(world.floorType)
+          and angelCount < StationaryAngel.MAX_PER_ROOM then
+        angelCount = angelCount + 1
+        enemy = StationaryAngel.new(definition)
+      end
     elseif definition.type == 'crawler' then
       crawler = Crawler.new(world)
     elseif definition.type == 'lilsnake' then

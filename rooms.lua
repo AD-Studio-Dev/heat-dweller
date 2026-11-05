@@ -119,7 +119,60 @@ local function makeLayout(random, floorType)
   return layout
 end
 
-local function makeEnemies(random, floorType)
+local MAX_ANGELS_PER_ROOM = 4 -- keep in sync with StationaryAngel.MAX_PER_ROOM
+
+-- True when a circle of `clearance` px around (x, y) touches any rectangle.
+local function touchesRect(x, y, clearance, rects)
+  for _, rect in ipairs(rects or {}) do
+    local closestX = math.max(rect.x, math.min(x, rect.x + rect.width))
+    local closestY = math.max(rect.y, math.min(y, rect.y + rect.height))
+    local offsetX, offsetY = x - closestX, y - closestY
+    if offsetX * offsetX + offsetY * offsetY < clearance * clearance then
+      return true
+    end
+  end
+  return false
+end
+
+-- Stationary Angels never move, so they must not sit inside a wall or obstacle
+-- (shots couldn't reach them and the room would never clear).
+local function makeSkyEnemies(random, layout)
+  local slots = {
+    { 400, 330 }, { 640, 330 }, { 880, 330 },
+    { 400, 600 }, { 640, 600 }, { 880, 600 },
+    { 520, 470 }, { 760, 470 },
+  }
+  local free = {}
+  for _, slot in ipairs(slots) do
+    if not touchesRect(slot[1], slot[2], 90, layout and layout.walls)
+        and not touchesRect(slot[1], slot[2], 90, layout and layout.obstacles) then
+      free[#free + 1] = slot
+    end
+  end
+  if #free == 0 then
+    free[1] = { 160, 160 }
+  end
+
+  -- Weighted toward fewer angels: 1 (33%), 2 (33%), 3 (17%), 4 (17%).
+  local countChoices = { 1, 1, 2, 2, 3, 4 }
+  local count = math.min(
+    countChoices[random(1, #countChoices)], MAX_ANGELS_PER_ROOM, #free
+  )
+
+  local enemies = {}
+  for index = 1, count do
+    local slot = table.remove(free, random(1, #free))
+    enemies[index] = {
+      type = 'stationaryangel',
+      x = slot[1],
+      y = slot[2],
+      startDelay = (index - 1) * 1.0, -- staggers the angels' first bursts
+    }
+  end
+  return enemies
+end
+
+local function makeEnemies(random, floorType, layout)
   local enemyTypesByFloor = {
     basement = { 'scar', 'spider', 'fly', 'centipede' },
     living_room = { 'scar', 'spider', 'centipede' },
@@ -127,9 +180,13 @@ local function makeEnemies(random, floorType)
     bedroom = { 'scar', 'spider', 'centipede' },
     attic = { 'spider', 'fly', 'centipede' },
     roof = { 'scar', 'fly', 'centipede' },
-    sky = { 'spider', 'fly', 'centipede' },
+    sky = { 'stationaryangel' }, -- The Sky's only enemy; never listed on any other floor.
   }
   local enemyTypes = enemyTypesByFloor[floorType] or enemyTypesByFloor.basement
+
+  if floorType == 'sky' then
+    return makeSkyEnemies(random, layout)
+  end
   local minimumCount = (floorType == 'sky' or floorType == 'roof') and 3 or 2
   local count = random(minimumCount, 4)
   local enemies = {}
@@ -197,6 +254,9 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
     local key = roomKey(gridX, gridY)
 
     if not occupied[key] then
+      -- Built first so enemy placement can avoid this room's walls and obstacles.
+      -- (Same random-number order as before: layout, then enemies.)
+      local layout = makeLayout(random, floorType)
       local room = {
         id = #rooms + 1,
         name = floorNames[floorType] .. ' Room ' .. (#rooms + 1),
@@ -204,8 +264,8 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
         gridX = gridX,
         gridY = gridY,
         connections = {},
-        layout = makeLayout(random, floorType),
-        enemies = makeEnemies(random, floorType),
+        layout = layout,
+        enemies = makeEnemies(random, floorType, layout),
         explored = false,
         cleared = false,
       }

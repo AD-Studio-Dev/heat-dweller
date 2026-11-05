@@ -35,6 +35,10 @@ function Renderer.new(atlas)
   renderer.enemyImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_002_scar.png')
   renderer.spiderImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_001_spider.png')
   renderer.centipedeImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/enemies_004_centipede.png')
+  renderer.stationaryAngelImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/enemies_005_stationaryangel.png')
+  renderer.stationaryAngelImage:setFilter('nearest', 'nearest')
+  renderer.divineBeamImage = love.graphics.newImage('resources/sprites/attack/divinebeam_attack.png')
+  renderer.divineBeamImage:setFilter('nearest', 'nearest')
   renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_001_thecrawler.png')
   renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_003_thegeometric.png')
   renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/boss_004_thestuffing.png')
@@ -466,6 +470,11 @@ function Renderer:drawEnemy(enemy, camera)
     return
   end
 
+  if enemy.kind == 'stationaryangel' then
+    self:drawStationaryAngel(enemy, camera)
+    return
+  end
+
   if enemy.kind == 'spider' then
     local spiderFrame = math.floor(enemy.animationTime / 0.1) % 2 + 1
     love.graphics.setColor(1, 1, 1, 1)
@@ -522,6 +531,77 @@ function Renderer:drawEnemy(enemy, camera)
     16,
     16
   )
+end
+
+-- Stationary Angel: ground telegraph, divine beam, then the (shaking, shrinking)
+-- sprite on top. Everything is driven by the enemy's own state, so a dead angel
+-- (drawEnemy returns early when not alive) draws no beam at all.
+function Renderer:drawStationaryAngel(angel, camera)
+  local screenX = angel.beamX - camera.x
+  local beamWidth = angel.beamWidth
+  local floorY = (angel.beamBottom or 960) - camera.y
+  local topY = -256 -- origin sits well above the top edge of the screen
+
+  if angel:isTelegraphing() then
+    local progress = angel:getTelegraphProgress()
+    local blink = 0.6 + 0.4 * math.sin(progress * math.pi * 10)
+    local screenHeight = love.graphics.getHeight()
+    love.graphics.setColor(1, 0.9, 0.45, (0.1 + 0.2 * progress) * blink)
+    love.graphics.rectangle('fill', screenX - beamWidth / 2, 0, beamWidth, screenHeight)
+    love.graphics.setColor(1, 0.95, 0.6, 0.35 + 0.5 * progress)
+    love.graphics.setLineWidth(2)
+    love.graphics.line(screenX - beamWidth / 2, 0, screenX - beamWidth / 2, screenHeight)
+    love.graphics.line(screenX + beamWidth / 2, 0, screenX + beamWidth / 2, screenHeight)
+    -- Ground highlight where the beam will land.
+    love.graphics.setColor(1, 0.95, 0.6, 0.45 + 0.4 * progress)
+    love.graphics.ellipse('fill', screenX, floorY - 20, beamWidth / 2 * (0.5 + 0.5 * progress), 14)
+    love.graphics.setLineWidth(1)
+  elseif angel:isBeamActive() then
+    local progress = angel:getBeamProgress()
+    local fade = math.min(1, progress / 0.15, (1 - progress) / 0.3)
+    local pulse = 0.92 + 0.08 * math.sin(angel.animationTime * 40)
+    local image = self.divineBeamImage
+    local imageWidth, imageHeight = image:getDimensions()
+    local length = floorY - topY
+    if length > 0 then
+      love.graphics.setColor(1, 1, 1, math.max(0, fade))
+      love.graphics.draw(
+        image,
+        math.floor(screenX),
+        math.floor(topY),
+        0,
+        beamWidth * pulse / imageWidth,
+        length / imageHeight,
+        imageWidth / 2,
+        0
+      )
+    end
+  end
+
+  local image = self.stationaryAngelImage
+  local imageWidth, imageHeight = image:getDimensions()
+  local displaySize = 128 * (angel.sizeFactor or 1)
+  local scale = displaySize / math.max(imageWidth, imageHeight)
+  local intensity = angel.shakeIntensity or 0
+  local shakeX = (math.random() * 2 - 1) * intensity
+  local shakeY = (math.random() * 2 - 1) * intensity
+  local bob = math.sin(angel.animationTime * 2) * 3
+  if angel.hitFlashTimer and angel.hitFlashTimer > 0 then
+    love.graphics.setColor(1, 0.6, 0.6, 1)
+  else
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+  love.graphics.draw(
+    image,
+    math.floor(angel.x - camera.x + shakeX),
+    math.floor(angel.y - camera.y + bob + shakeY),
+    0,
+    scale,
+    scale,
+    imageWidth / 2,
+    imageHeight / 2
+  )
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function Renderer:drawCrawler(crawler, camera)
