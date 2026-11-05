@@ -1380,7 +1380,7 @@ local function updateSweatCombat(dt, targets)
     targets,
     walls,
     world,
-    player.stats.damage * 0.2
+    player.stats.damage
   )
   for _, target in ipairs(defeated) do
     if target == crawler or target == lilSnake or target == geometric or target == stuffing then

@@ -15,7 +15,7 @@ function Centipede.new(config)
     width = baseWidth,
     height = baseHeight,
     scale = scale,
-    health = config.health or 8,
+    health = config.health or 10,
     maxHealth = config.maxHealth or config.health or 8,
     damage = config.damage or 0.7,
     speed = config.speed or 180,

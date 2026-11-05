@@ -12,7 +12,7 @@ function Spider.new(config)
     y = config.y or 600,
     width = 64,
     height = 64,
-    health = config.health or 5,
+    health = config.health or 7,
     damage = config.damage or 0.5,
     speed = config.speed or 105,
     aggroRadius = 300,

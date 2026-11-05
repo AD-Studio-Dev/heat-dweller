@@ -1003,7 +1003,7 @@ function Renderer:drawHud(player, items)
   )
   love.graphics.setFont(self.hudFont)
   local stats = {
-    { key = 'damage', value = function() return tostring(math.max(1, math.floor(player.stats.damage / 20))) end, image = self.statImages.damage },
+    { key = 'damage', value = function() return tostring(math.floor(player.stats.damage)) end, image = self.statImages.damage },
     { key = 'speed', value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
     { key = 'attackSpeed', value = function() return formatStat(player:getAttackSpeed()) end, image = self.statImages.attackSpeed },
     { key = 'range', value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },

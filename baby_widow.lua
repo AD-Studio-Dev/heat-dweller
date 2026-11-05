@@ -21,7 +21,7 @@ function BabyWidow.new(world, config)
     speed = config.speed or 135,
     width = 64,
     height = 64,
-    health = config.health or 180,
+    health = config.health or 50,
     damage = config.damage or 0.35,
     contactRadius = 42,
     attackInterval = 0.9,

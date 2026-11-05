@@ -37,11 +37,11 @@ function Player.new(config)
     hurtAnimationTime = 0,
     sweatShotCooldown = 0,
     sweatShotDelay = config.sweatShotDelay or 0.35,
-    onShootSweat = config.onShootSweat,
+    onShootSweat = config.onShootSweat, 
 
     -- Stats modified by passive collectibles.
     stats = {
-      damage = 20,
+      damage = 3,
       maxHealth = 100,
       health = 100,
       dollars = 20,

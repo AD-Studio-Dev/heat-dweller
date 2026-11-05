@@ -46,7 +46,7 @@ function Fly:new(x, y)
     y = y or 0,
     width = 40,
     height = 40,
-    health = 2,
+    health = 5,
     damage = 0.5,
     speed = 285,
     acceleration = 900,
