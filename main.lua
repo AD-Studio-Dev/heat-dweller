@@ -197,7 +197,8 @@ end
 local View = {
   TILE_SIZE = 64,
   WALL_THICKNESS = 64, -- the outer tile ring is wall: drawn as the angled stone frame, and solid
-  DOOR_LENGTH = 192,   -- door opening: 3 tiles, centered on the middle tile of its wall
+  DOOR_LENGTH = 64,    -- door opening = one tile (the door sprite is 32 px at 2x), centered on its wall
+  DOOR_TRIGGER_LENGTH = 112, -- how far off-center the player may be and still use the door
   DOOR_EDGE = 104,     -- how close to a wall the player must be to use its door
   ENTRY_OFFSET = 120,  -- where the player appears after coming through a door
 }
@@ -220,7 +221,7 @@ end
 function View.atDoor(direction)
   local dx = math.abs(player.x - world.width / 2)
   local dy = math.abs(player.y - world.height / 2)
-  local half = View.DOOR_LENGTH / 2
+  local half = View.DOOR_TRIGGER_LENGTH / 2
   if direction == 'right' then return player.x >= world.width - View.DOOR_EDGE and dy <= half end
   if direction == 'left' then return player.x <= View.DOOR_EDGE and dy <= half end
   if direction == 'up' then return player.y <= View.DOOR_EDGE and dx <= half end
@@ -2976,6 +2977,7 @@ function drawWorld()
       innerWidth = world.width - wall * 2,
       innerHeight = world.height - wall * 2,
       doorLength = View.DOOR_LENGTH,
+      roomId = currentRoom.id,
     }
 
     local doors = {}
@@ -2985,17 +2987,19 @@ function drawWorld()
         local destination = rooms[currentRoom.connections[direction]]
         local locked = doorsLocked or (currentRoom.doors and currentRoom.doors[direction]
           and currentRoom.doors[direction].locked)
-        local color
+        local color, kind
         if currentRoom.boss and currentRoom.dealDirection == direction then
-          color = { 0.72, 0.18, 0.7, 1 }
+          color, kind = { 0.72, 0.18, 0.7, 1 }, 'deal'
         elseif destination and destination.roomType == 'shop' then
-          color = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }
+          color, kind = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }, 'shop'
         elseif destination and destination.roomType == 'item' then
-          color = locked and { 0.68, 0.45, 0.08, 1 } or { 1, 0.8, 0.2, 1 }
+          color, kind = locked and { 0.68, 0.45, 0.08, 1 } or { 1, 0.8, 0.2, 1 }, 'item'
+        elseif destination and destination.roomType == 'boss' then
+          color, kind = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }, 'boss'
         else
-          color = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }
+          color, kind = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }, 'normal'
         end
-        doors[#doors + 1] = { side = direction, color = color, locked = locked }
+        doors[#doors + 1] = { side = direction, color = color, locked = locked, kind = kind }
       end
     end
 

@@ -34,6 +34,23 @@ end
 local HUD_MARGIN = 16
 local HUD_ALPHA = 0.88
 
+-- Door sprites. Each sheet is 128 x 64 with 32 x 32 frames (see doors.json):
+-- closed (0,0), three opening frames (32..96, 0), open (0,32). The art is drawn
+-- for the TOP wall (wide edge outward) and rotated for the other three walls. At
+-- 2x each door is exactly one 64 px tile, the same as the wall thickness.
+-- Sheets that are missing on disk are skipped; the procedural door is used then.
+local DOOR_SHEET_PATHS = {
+  normal = 'resources/gfx/grid/doors_001_basementdoor.png',
+  boss = 'resources/gfx/grid/doors_002_bossdoor.png',
+  shop = 'resources/gfx/grid/doors_003_shopdoor.png',
+}
+-- Which sheet each kind of door uses (kind comes from main.lua's door list).
+local DOOR_SHEET_FOR_KIND = {
+  normal = 'normal', boss = 'boss', deal = 'boss', shop = 'shop', item = 'shop',
+}
+local DOOR_FRAME_SIZE, DOOR_SCALE, DOOR_FRAME_SECONDS = 32, 2, 0.1
+local DOOR_ROTATION = { up = 0, right = math.pi / 2, down = math.pi, left = -math.pi / 2 }
+
 function Renderer.new(atlas)
   LilSnake.load()
   local renderer = setmetatable({ atlas = atlas }, Renderer)
@@ -168,6 +185,26 @@ function Renderer.new(atlas)
       x, y, 32, 32, renderer.enemyImage:getDimensions()
     )
   end
+
+  renderer.doorSheets = {}
+  for sheetName, path in pairs(DOOR_SHEET_PATHS) do
+    if love.filesystem.getInfo(path) then
+      local image = love.graphics.newImage(path)
+      image:setFilter('nearest', 'nearest')
+      local imageWidth, imageHeight = image:getDimensions()
+      local function frameQuad(x, y)
+        return love.graphics.newQuad(x, y, DOOR_FRAME_SIZE, DOOR_FRAME_SIZE, imageWidth, imageHeight)
+      end
+      renderer.doorSheets[sheetName] = {
+        image = image,
+        closed = frameQuad(0, 0),
+        opening = { frameQuad(32, 0), frameQuad(64, 0), frameQuad(96, 0) },
+        open = frameQuad(0, 32),
+      }
+    end
+  end
+  renderer.doorStates = {}
+  renderer.doorStateRoom = nil
 
   return renderer
 end
@@ -1073,7 +1110,62 @@ end
 
 -- A doorway cut through the band: stone jamb, dark passage, then the door
 -- (solid when locked, an open threshold strip when unlocked).
-local function drawWallDoor(theme, geometry, door, frame)
+-- Draws one door from its sprite sheet in the 64 px wall ring, playing the
+-- opening animation when it goes from locked to unlocked. Returns false when no
+-- sheet is loaded so the caller can fall back to the procedural door.
+local function drawDoorSprite(self, door, frame)
+  local sheet = self.doorSheets[DOOR_SHEET_FOR_KIND[door.kind or 'normal']] or self.doorSheets.normal
+  if not sheet then
+    return false
+  end
+
+  local now = love.timer.getTime()
+  local locked = door.locked and true or false
+  local state = self.doorStates[door.side]
+  if not state then
+    state = { locked = locked }
+    self.doorStates[door.side] = state
+  end
+  if locked then
+    state.openedAt = nil
+  elseif state.locked then
+    state.openedAt = now -- just unlocked: start the opening frames
+  end
+  state.locked = locked
+
+  local quad = sheet.closed
+  if not locked then
+    local openFor = state.openedAt and (now - state.openedAt) or math.huge
+    local index = math.floor(openFor / DOOR_FRAME_SECONDS) + 1
+    quad = sheet.opening[index] or sheet.open
+  end
+
+  local half = DOOR_FRAME_SIZE * DOOR_SCALE / 2
+  local middleX = frame.innerX + frame.innerWidth / 2
+  local middleY = frame.innerY + frame.innerHeight / 2
+  local x, y
+  if door.side == 'up' then
+    x, y = middleX, frame.innerY - half
+  elseif door.side == 'down' then
+    x, y = middleX, frame.innerY + frame.innerHeight + half
+  elseif door.side == 'left' then
+    x, y = frame.innerX - half, middleY
+  else
+    x, y = frame.innerX + frame.innerWidth + half, middleY
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(
+    sheet.image, quad, math.floor(x), math.floor(y), DOOR_ROTATION[door.side],
+    DOOR_SCALE, DOOR_SCALE, DOOR_FRAME_SIZE / 2, DOOR_FRAME_SIZE / 2
+  )
+  return true
+end
+
+local function drawWallDoor(self, theme, geometry, door, frame)
+  if drawDoorSprite(self, door, frame) then
+    return
+  end
+
   local innerStart, innerLength, doorCenter
   if door.side == 'up' or door.side == 'down' then
     innerStart, innerLength = frame.innerX, frame.innerWidth
@@ -1123,6 +1215,10 @@ end
 -- inner rectangle (the floor) and the door opening length; `doors` is a list of
 -- { side, color, locked }.
 function Renderer:drawRoomFrame(theme, frame, doors)
+  if frame.roomId ~= self.doorStateRoom then
+    self.doorStates = {} -- new room: doors start in their current state, no animation
+    self.doorStateRoom = frame.roomId
+  end
   local previousLineWidth = love.graphics.getLineWidth()
   local geometries = {}
   for index, side in ipairs(WALL_SIDES) do
@@ -1147,7 +1243,7 @@ function Renderer:drawRoomFrame(theme, frame, doors)
   end
 
   for _, door in ipairs(doors or {}) do
-    drawWallDoor(theme, geometries[door.side], door, frame)
+    drawWallDoor(self, theme, geometries[door.side], door, frame)
   end
 
   -- Optional themed glow (embers, sky light) that gently pulses over the stone.
