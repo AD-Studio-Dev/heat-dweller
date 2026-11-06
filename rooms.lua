@@ -21,6 +21,65 @@ local floorNames = {
   sky = 'The Sky',
 }
 
+-- Wall palettes for the stone frame drawn around every room (renderer.lua,
+-- Renderer:drawRoomFrame). `face` is the brick colour, `mortar` the joints and
+-- depth shading, `cap` the lit top surface of the wall (derived from `face`
+-- when omitted) and `glow` an optional pulsing overlay {r, g, b, a}.
+-- Add an entry here when a new floor type is added; unknown floors fall back
+-- to the basement look. `cellar` and `burning_basement` are ready for when
+-- those floors exist.
+Rooms.wallThemes = {
+  basement = { face = { 0.31, 0.32, 0.33 }, mortar = { 0.08, 0.085, 0.09 } },
+  cellar = { face = { 0.24, 0.28, 0.35 }, mortar = { 0.06, 0.075, 0.1 } },
+  burning_basement = {
+    face = { 0.46, 0.2, 0.12 }, mortar = { 0.14, 0.04, 0.03 }, glow = { 1, 0.4, 0.08, 0.2 },
+  },
+  living_room = { face = { 0.46, 0.24, 0.2 }, mortar = { 0.14, 0.07, 0.06 } },
+  kitchen = { face = { 0.5, 0.55, 0.46 }, mortar = { 0.22, 0.25, 0.2 } },
+  bedroom = { face = { 0.42, 0.3, 0.5 }, mortar = { 0.14, 0.09, 0.18 } },
+  attic = { face = { 0.45, 0.33, 0.2 }, mortar = { 0.16, 0.1, 0.06 } },
+  roof = { face = { 0.27, 0.36, 0.47 }, mortar = { 0.08, 0.11, 0.15 } },
+  sky = { face = { 0.75, 0.87, 0.96 }, mortar = { 0.5, 0.64, 0.76 }, glow = { 1, 1, 1, 0.07 } },
+}
+
+-- Special rooms recolour their floor's walls (multiplied per channel).
+local roomWallTints = {
+  shop = { 1.25, 0.95, 0.55 },
+  deal = { 0.95, 0.5, 1.0 },
+}
+
+local wallThemeCache = {}
+
+-- Returns { face, mortar, cap, glow } for a floor type, optionally tinted for
+-- a special room type ('shop', 'deal'). Results are cached; don't modify them.
+function Rooms.getWallTheme(floorType, roomType)
+  local key = tostring(floorType) .. '|' .. tostring(roomType)
+  local cached = wallThemeCache[key]
+  if cached then
+    return cached
+  end
+
+  local base = Rooms.wallThemes[floorType] or Rooms.wallThemes.basement
+  local tint = roomWallTints[roomType] or { 1, 1, 1 }
+  local function tinted(color)
+    return {
+      math.min(1, color[1] * tint[1]),
+      math.min(1, color[2] * tint[2]),
+      math.min(1, color[3] * tint[3]),
+    }
+  end
+  local face = tinted(base.face)
+  local theme = {
+    face = face,
+    mortar = tinted(base.mortar),
+    cap = base.cap and tinted(base.cap)
+      or { math.min(1, face[1] * 1.3 + 0.03), math.min(1, face[2] * 1.3 + 0.03), math.min(1, face[3] * 1.3 + 0.03) },
+    glow = base.glow,
+  }
+  wallThemeCache[key] = theme
+  return theme
+end
+
 local directions = {
   { name = 'up', dx = 0, dy = -1, opposite = 'down' },
   { name = 'down', dx = 0, dy = 1, opposite = 'up' },
@@ -46,28 +105,33 @@ local function makeRandom(seed)
   end
 end
 
+-- Every room is a 21 x 11 tile grid (1344 x 704 px, 64 px tiles).
+-- The outer ring of tiles is the stone wall frame (see renderer.lua).
+-- Walls/obstacles stay inside the playable interior (tile columns 1-19, rows 1-9),
+-- off the center lane the player spawns in, and clear of all four doorways.
+local TILE = 64
+Rooms.TILE, Rooms.WIDTH, Rooms.HEIGHT = TILE, 21 * TILE, 11 * TILE
+
+local function tileRect(col, row, cols, rows)
+  return { x = col * TILE, y = row * TILE, width = cols * TILE, height = rows * TILE }
+end
+
+local function overlaps(a, b, pad)
+  return a.x < b.x + b.width + pad and b.x < a.x + a.width + pad
+    and a.y < b.y + b.height + pad and b.y < a.y + a.height + pad
+end
+
 local function makeLayout(random, floorType)
   local pattern = random(1, 4)
   local walls
-  if pattern == 1 then
-    walls = {
-      { x = random(320, 480), y = random(200, 280), width = 80, height = 240 },
-      { x = random(1040, 1200), y = random(680, 760), width = 80, height = 240 },
-    }
-  elseif pattern == 2 then
-    walls = {
-      { x = random(560, 720), y = random(200, 280), width = 320, height = 80 },
-      { x = random(560, 720), y = random(840, 920), width = 320, height = 80 },
-    }
-  elseif pattern == 3 then
-    walls = {
-      { x = random(640, 720), y = random(320, 400), width = 160, height = 400 },
-    }
-  else
-    walls = {
-      { x = random(360, 440), y = random(360, 440), width = 160, height = 160 },
-      { x = random(1000, 1080), y = random(720, 800), width = 160, height = 160 },
-    }
+  if pattern == 1 then -- two 1x3 pillars
+    walls = { tileRect(random(3, 7), random(1, 3), 1, 3), tileRect(random(13, 17), random(5, 7), 1, 3) }
+  elseif pattern == 2 then -- two 5x1 bars, above and below the center lane
+    walls = { tileRect(random(3, 13), 3, 5, 1), tileRect(random(3, 13), 7, 5, 1) }
+  elseif pattern == 3 then -- one 2x4 block on the right
+    walls = { tileRect(random(14, 16), random(2, 4), 2, 4) }
+  else -- two 2x2 blocks
+    walls = { tileRect(random(3, 7), random(2, 4), 2, 2), tileRect(random(13, 16), random(5, 7), 2, 2) }
   end
 
   local layout = {
@@ -85,34 +149,44 @@ local function makeLayout(random, floorType)
   end
 
   if floorType == 'living_room' then
-    obstacle(270, 200, 240, 110, 'couch')
-    obstacle(900, 650, 150, 110, 'table')
+    obstacle(160, 160, 240, 96, 'couch')
+    obstacle(960, 448, 128, 96, 'table')
   elseif floorType == 'kitchen' then
-    obstacle(240, 180, 280, 90, 'counter')
-    obstacle(900, 680, 260, 90, 'cabinet')
+    obstacle(160, 160, 256, 80, 'counter')
+    obstacle(896, 512, 256, 80, 'cabinet')
   elseif floorType == 'bedroom' then
-    obstacle(270, 170, 300, 150, 'bed')
-    obstacle(900, 650, 170, 100, 'dresser')
+    obstacle(160, 160, 256, 128, 'bed')
+    obstacle(960, 512, 128, 80, 'dresser')
   elseif floorType == 'attic' then
-    obstacle(260, 210, 130, 270, 'crate')
-    obstacle(930, 580, 130, 240, 'crate')
+    obstacle(160, 128, 96, 128, 'crate')
+    obstacle(960, 448, 96, 160, 'crate')
     layout.decorations[#layout.decorations + 1] = { type = 'cobweb', x = 70, y = 70 }
-    layout.decorations[#layout.decorations + 1] = { type = 'cobweb', x = 1210, y = 70 }
-    layout.decorations[#layout.decorations + 1] = { type = 'rafter', y = 150 }
-    layout.decorations[#layout.decorations + 1] = { type = 'rafter', y = 810 }
+    layout.decorations[#layout.decorations + 1] = { type = 'cobweb', x = Rooms.WIDTH - 70, y = 70 }
+    layout.decorations[#layout.decorations + 1] = { type = 'rafter', y = 110 }
+    layout.decorations[#layout.decorations + 1] = { type = 'rafter', y = Rooms.HEIGHT - 110 }
   elseif floorType == 'roof' then
     layout.decorations[#layout.decorations + 1] = { type = 'roof_edge' }
   elseif floorType == 'sky' then
-    obstacle(260, 250, 180, 34, 'cloud_platform')
-    obstacle(830, 620, 210, 34, 'cloud_platform')
-    layout.decorations[#layout.decorations + 1] = { type = 'cloud', x = 200, y = 600, scale = 1.4 }
-    layout.decorations[#layout.decorations + 1] = { type = 'cloud', x = 1050, y = 300, scale = 1.8 }
+    obstacle(96, 100, 160, 34, 'cloud_platform')
+    obstacle(1040, 560, 180, 34, 'cloud_platform')
+    layout.decorations[#layout.decorations + 1] = { type = 'cloud', x = 150, y = 520, scale = 1.4 }
+    layout.decorations[#layout.decorations + 1] = { type = 'cloud', x = 1100, y = 200, scale = 1.8 }
   end
 
-  if floorType == 'attic' then
+  if floorType == 'attic' then -- smaller blocks, still snapped to whole tiles
     for _, wall in ipairs(layout.walls) do
-      wall.width = math.max(64, math.floor(wall.width * 0.72))
-      wall.height = math.max(64, math.floor(wall.height * 0.78))
+      wall.width = math.max(TILE, math.floor(wall.width * 0.72 / TILE + 0.5) * TILE)
+      wall.height = math.max(TILE, math.floor(wall.height * 0.78 / TILE + 0.5) * TILE)
+    end
+  end
+
+  -- Drop any wall that would sit on top of (or flush against) a furniture obstacle.
+  for index = #layout.walls, 1, -1 do
+    for _, item in ipairs(layout.obstacles) do
+      if overlaps(layout.walls[index], item, 32) then
+        table.remove(layout.walls, index)
+        break
+      end
     end
   end
 
@@ -138,9 +212,9 @@ end
 -- (shots couldn't reach them and the room would never clear).
 local function makeSkyEnemies(random, layout)
   local slots = {
-    { 400, 330 }, { 640, 330 }, { 880, 330 },
-    { 400, 600 }, { 640, 600 }, { 880, 600 },
-    { 520, 470 }, { 760, 470 },
+    { 480, 224 }, { 672, 224 }, { 864, 224 },
+    { 480, 480 }, { 672, 480 }, { 864, 480 },
+    { 576, 352 }, { 768, 352 },
   }
   local free = {}
   for _, slot in ipairs(slots) do
@@ -150,7 +224,7 @@ local function makeSkyEnemies(random, layout)
     end
   end
   if #free == 0 then
-    free[1] = { 160, 160 }
+    free[1] = { Rooms.WIDTH / 2, Rooms.HEIGHT / 2 }
   end
 
   -- Weighted toward fewer angels: 1 (33%), 2 (33%), 3 (17%), 4 (17%).
@@ -172,6 +246,21 @@ local function makeSkyEnemies(random, layout)
   return enemies
 end
 
+-- Ground enemies spawn on tile centers in the middle of the room (tile columns
+-- 3-17, rows 3-7 = x 224-1120, y 224-480): inside the 960x640 room, away from the
+-- doorways the player arrives through, and not on any wall or obstacle.
+local function randomSpawn(random, layout)
+  local x, y
+  for _ = 1, 12 do
+    x = random(3, 17) * TILE + TILE / 2
+    y = random(3, 7) * TILE + TILE / 2
+    if not touchesRect(x, y, 48, layout.walls) and not touchesRect(x, y, 48, layout.obstacles) then
+      break
+    end
+  end
+  return x, y
+end
+
 local function makeEnemies(random, floorType, layout)
   local enemyTypesByFloor = {
     basement = { 'scar', 'spider', 'fly', 'centipede' },
@@ -188,23 +277,16 @@ local function makeEnemies(random, floorType, layout)
     return makeSkyEnemies(random, layout)
   end
   local minimumCount = (floorType == 'sky' or floorType == 'roof') and 3 or 2
-  local count = random(minimumCount, 4)
+  local special = floorType == 'living_room' and random() < 0.2
+  local fixedTypes = special and { 'scar', 'spider', 'spider' } or nil
+  local count = fixedTypes and #fixedTypes or random(minimumCount, 4)
   local enemies = {}
-  for _ = 1, count do
-    local x = random(240, 1040)
-    local y = random(220, 740)
-    enemies[#enemies + 1] = {
-      type = enemyTypes[random(1, #enemyTypes)],
+  for index = 1, count do
+    local x, y = randomSpawn(random, layout)
+    enemies[index] = {
+      type = fixedTypes and fixedTypes[index] or enemyTypes[random(1, #enemyTypes)],
       x = x,
       y = y,
-    }
-  end
-
-  if floorType == 'living_room' and random() < 0.2 then
-    return {
-      { type = 'scar', x = 360, y = 300 },
-      { type = 'spider', x = 920, y = 300 },
-      { type = 'spider', x = 640, y = 720 },
     }
   end
 

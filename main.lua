@@ -187,6 +187,47 @@ local function floorTypeForIndex(index)
   return FLOOR_TYPES[index]
 end
 
+-- Room geometry and screen fitting. The whole game renders to ONE fixed 16:9
+-- canvas (1344 x 756) that is scaled to the window by a WHOLE-NUMBER factor,
+-- centered, with dark "outer space" around it. The playable room (1344 x 704, a
+-- 21 x 11 grid of 64 px tiles) sits in the middle of the canvas; the 26 px left
+-- over at the top and bottom belongs to the stone wall frame, so the framed room
+-- fills the canvas exactly. Kept in ONE table because a Lua chunk can hold at
+-- most 200 top-level locals.
+local View = {
+  TILE_SIZE = 64,
+  WALL_THICKNESS = 64, -- the outer tile ring is wall: drawn as the angled stone frame, and solid
+  DOOR_LENGTH = 192,   -- door opening: 3 tiles, centered on the middle tile of its wall
+  DOOR_EDGE = 104,     -- how close to a wall the player must be to use its door
+  ENTRY_OFFSET = 120,  -- where the player appears after coming through a door
+}
+View.ROOM_WIDTH, View.ROOM_HEIGHT = 21 * View.TILE_SIZE, 11 * View.TILE_SIZE
+View.CANVAS_WIDTH, View.CANVAS_HEIGHT = 1344, 756 -- exactly 16:9
+-- Where the room's (0, 0) lands inside the canvas.
+View.ROOM_OFFSET_X = (View.CANVAS_WIDTH - View.ROOM_WIDTH) / 2
+View.ROOM_OFFSET_Y = (View.CANVAS_HEIGHT - View.ROOM_HEIGHT) / 2
+
+-- x, y, width, height of a door, always centered on its wall.
+function View.doorRect(direction)
+  local w, h, t, l = world.width, world.height, View.WALL_THICKNESS, View.DOOR_LENGTH
+  if direction == 'right' then return w - t, (h - l) / 2, t, l end
+  if direction == 'left' then return 0, (h - l) / 2, t, l end
+  if direction == 'up' then return (w - l) / 2, 0, l, t end
+  return (w - l) / 2, h - t, l, t
+end
+
+-- True when the player is in the doorway of `direction` (not just near that wall).
+function View.atDoor(direction)
+  local dx = math.abs(player.x - world.width / 2)
+  local dy = math.abs(player.y - world.height / 2)
+  local half = View.DOOR_LENGTH / 2
+  if direction == 'right' then return player.x >= world.width - View.DOOR_EDGE and dy <= half end
+  if direction == 'left' then return player.x <= View.DOOR_EDGE and dy <= half end
+  if direction == 'up' then return player.y <= View.DOOR_EDGE and dx <= half end
+  if direction == 'down' then return player.y >= world.height - View.DOOR_EDGE and dx <= half end
+  return false
+end
+
 -- Tile floor ("Base + Decal"): each floor type can have a base tile at
 -- resources/gfx/tiles/<floorType>_tile.png. Floors without one yet fall back
 -- to the old procedural grid. Overlay decals are shared and stamped per room.
@@ -600,9 +641,88 @@ local function createBossDefeatTone()
   return registerSfxSource(love.audio.newSource(soundData, 'static'))
 end
 
+-- Integer-scale fit: the canvas is drawn at a WHOLE-NUMBER scale (floor), so
+-- every texel maps to an exact block of screen pixels (no shimmer, no uneven
+-- pixels), and is centered with whole-pixel offsets. The room is never stretched
+-- to fill the monitor; whatever is left over is the dark outer frame. Only when
+-- the window is smaller than the canvas (scale would floor to 0) do we fall
+-- back to a fractional fit so the whole room stays visible.
+function View.fit()
+  local width, height = View.realGetDimensions()
+  local raw = math.min(width / View.CANVAS_WIDTH, height / View.CANVAS_HEIGHT)
+  local scale = raw >= 1 and math.floor(raw) or raw
+  local offsetX = math.floor((width - View.CANVAS_WIDTH * scale) / 2)
+  local offsetY = math.floor((height - View.CANVAS_HEIGHT * scale) / 2)
+  return scale, offsetX, offsetY
+end
+
+-- Faint, fixed stars for the dark outer-space frame (positions are 0..1 of the
+-- window so they stay put when the window changes size).
+function View.makeStars()
+  local generator = love.math.newRandomGenerator(20261105)
+  View.stars = {}
+  for index = 1, 160 do
+    View.stars[index] = {
+      x = generator:random(),
+      y = generator:random(),
+      size = generator:random() < 0.12 and 2 or 1,
+      alpha = 0.15 + generator:random() * 0.45,
+    }
+  end
+end
+
+function View.drawOuterSpace(windowWidth, windowHeight)
+  love.graphics.clear(0.012, 0.014, 0.024, 1)
+  for _, star in ipairs(View.stars or {}) do
+    love.graphics.setColor(0.75, 0.82, 1, star.alpha)
+    love.graphics.rectangle(
+      'fill', math.floor(star.x * windowWidth), math.floor(star.y * windowHeight), star.size, star.size
+    )
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Toggle desktop fullscreen (borderless, native resolution, any aspect ratio).
+function View.toggleFullscreen()
+  local isFullscreen = love.window.getFullscreen()
+  local success, message = love.window.setFullscreen(not isFullscreen, 'desktop')
+  if not success then
+    print('Unable to toggle fullscreen: ' .. tostring(message))
+  end
+end
+
+-- Window pixels -> canvas pixels.
+function View.toCanvas(x, y)
+  local scale, offsetX, offsetY = View.fit()
+  return (x - offsetX) / scale, (y - offsetY) / scale
+end
+
+-- A window about as big as fits the desktop (whole-number scale when possible).
+function View.initialWindowSize()
+  local desktopWidth, desktopHeight = love.window.getDesktopDimensions()
+  local scale = math.min((desktopWidth - 80) / View.CANVAS_WIDTH, (desktopHeight - 120) / View.CANVAS_HEIGHT)
+  if scale >= 1 then
+    scale = math.floor(scale)
+  end
+  return math.floor(View.CANVAS_WIDTH * scale), math.floor(View.CANVAS_HEIGHT * scale)
+end
+
+-- Game code only ever sees canvas coordinates: size and mouse queries are
+-- redirected so the HUD, menus and aiming never care about the real window size.
+function View.install()
+  local graphics, mouse = love.graphics, love.mouse
+  View.realGetDimensions, View.realGetPosition = graphics.getDimensions, mouse.getPosition
+  graphics.getWidth = function() return View.CANVAS_WIDTH end
+  graphics.getHeight = function() return View.CANVAS_HEIGHT end
+  graphics.getDimensions = function() return View.CANVAS_WIDTH, View.CANVAS_HEIGHT end
+  mouse.getPosition = function() return View.toCanvas(View.realGetPosition()) end
+end
+
+-- Frozen single-screen camera: the room always fits the canvas, so it never moves.
 local function updateCameraSize()
-  world.camera.width = love.graphics.getWidth()
-  world.camera.height = love.graphics.getHeight()
+  local camera = world.camera
+  camera.x, camera.y = 0, 0
+  camera.width, camera.height = View.CANVAS_WIDTH, View.CANVAS_HEIGHT
 end
 
 local function resetPlayer()
@@ -862,24 +982,26 @@ local function initializeMenu()
 end
 
 function love.load()
-  if love.window.maximize and love.window.isMaximized
-      and not love.window.isMaximized() then
-    love.window.maximize()
-  end
-
+  -- Pixel art stays razor sharp: this must run before ANY image/canvas/font is
+  -- created. The window itself (desktop fullscreen) is configured in conf.lua.
   love.graphics.setDefaultFilter('nearest', 'nearest')
+  View.install()
+  View.makeStars()
+  View.canvas = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT)
+  View.canvas:setFilter('nearest', 'nearest')
   love.window.setTitle('Heat Dweller')
   loadTileAssets()
   initializeProfileAndItems()
 
   world = {
-    width = 1280,
-    height = 960,
-    tileSize = 64,
+    width = View.ROOM_WIDTH,
+    height = View.ROOM_HEIGHT,
+    tileSize = View.TILE_SIZE,
+    wall = View.WALL_THICKNESS,
     roomType = 'basement',
     floorType = 'basement',
     floorIndex = 1,
-    camera = { x = 0, y = 0, width = 1024, height = 576 },
+    camera = { x = 0, y = 0, width = View.CANVAS_WIDTH, height = View.CANVAS_HEIGHT },
   }
   deathScreenImage = nil
   local deathScreenCandidates = {
@@ -1540,8 +1662,8 @@ function love.update(dt)
   if love.mouse.isDown(1) then
     local mouseX, mouseY = love.mouse.getPosition()
     local screenWidth, screenHeight = love.graphics.getDimensions()
-    local letterboxX = math.max(0, (screenWidth - world.width) / 2)
-    local letterboxY = math.max(0, (screenHeight - world.height) / 2)
+    local letterboxX = View.ROOM_OFFSET_X
+    local letterboxY = View.ROOM_OFFSET_Y
     local targetX = mouseX + world.camera.x - letterboxX
     local targetY = mouseY + world.camera.y - letterboxY
     player:shootSweat(targetX - player.x, targetY - (player.y - 22))
@@ -1991,8 +2113,8 @@ local function captureGameplayPauseFrame()
   local shakeX, shakeY = getScreenShakeOffset()
   local cameraX, cameraY = world.camera.x, world.camera.y
   local screenWidth, screenHeight = love.graphics.getDimensions()
-  local letterboxX = math.max(0, (screenWidth - world.width) / 2)
-  local letterboxY = math.max(0, (screenHeight - world.height) / 2)
+  local letterboxX = View.ROOM_OFFSET_X
+  local letterboxY = View.ROOM_OFFSET_Y
   world.camera.x = cameraX - shakeX - letterboxX
   world.camera.y = cameraY - shakeY - letterboxY
   drawWorld()
@@ -2046,6 +2168,17 @@ local function captureGameplayPauseFrame()
 end
 
 function love.draw()
+  -- Draw the game at its fixed canvas size, then fit that canvas to the window.
+  love.graphics.setCanvas(View.canvas)
+  View.drawFrame()
+  love.graphics.setCanvas()
+  local scale, offsetX, offsetY = View.fit()
+  View.drawOuterSpace(View.realGetDimensions())
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(View.canvas, offsetX, offsetY, 0, scale, scale)
+end
+
+View.drawFrame = function()
   love.graphics.clear(0.055, 0.07, 0.08)
 
   if gameState == 'opening_cutscene' and openingCutscene then
@@ -2105,7 +2238,7 @@ function love.draw()
   end
 
   if gameState == 'floor_complete' then
-    drawWorld()
+    drawWorldFramed()
     love.graphics.setColor(0.95, 0.92, 0.82, 1)
     love.graphics.setFont(renderer.bigFont)
     love.graphics.printf('BASEMENT CLEARED', 0, love.graphics.getHeight() / 2 - 20, love.graphics.getWidth(), 'center')
@@ -2113,7 +2246,7 @@ function love.draw()
   end
 
   if gameState == 'floor_transition' then
-    drawWorld()
+    drawWorldFramed()
     local transitionDuration = floorTransitionSoundDuration or floorTransitionDuration
     local fadeInProgress = math.min(1, (floorTransitionTimer or 0) / floorTransitionFadeDuration)
     local fadeOutProgress = math.min(
@@ -2137,7 +2270,7 @@ function love.draw()
   end
 
   if gameState == 'game_over' then
-    drawWorld()
+    drawWorldFramed()
     love.graphics.setColor(0.04, 0.01, 0.02, 0.82)
     love.graphics.rectangle('fill', 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
 
@@ -2179,8 +2312,8 @@ function love.draw()
   local shakeX, shakeY = getScreenShakeOffset()
   local cameraX, cameraY = world.camera.x, world.camera.y
   local screenWidth, screenHeight = love.graphics.getDimensions()
-  local letterboxX = math.max(0, (screenWidth - world.width) / 2)
-  local letterboxY = math.max(0, (screenHeight - world.height) / 2)
+  local letterboxX = View.ROOM_OFFSET_X
+  local letterboxY = View.ROOM_OFFSET_Y
   world.camera.x = cameraX - shakeX - letterboxX
   world.camera.y = cameraY - shakeY - letterboxY
   drawWorld()
@@ -2312,37 +2445,10 @@ function love.resize(width, height)
 end
 
 function love.keypressed(key)
-  if key == 'f' then
-    logFullscreenColorState('before maximized/windowed toggle')
-    if type(love.window.isMaximized) ~= 'function'
-        or type(love.window.maximize) ~= 'function'
-        or type(love.window.restore) ~= 'function' then
-      print('Unable to toggle maximized window: this LÖVE version lacks window maximize APIs')
-      return
-    end
-
-    local modeChanged, modeError = true, nil
-    if love.window.isMaximized() then
-      love.window.restore()
-      modeChanged, modeError = love.window.setMode(
-        1280,
-        720,
-        {
-          fullscreen = false,
-          borderless = false,
-          resizable = true,
-          centered = true,
-        }
-      )
-    else
-      love.window.maximize()
-    end
-    if not modeChanged then
-      print('Unable to restore 1280x720 window mode: ' .. tostring(modeError))
-      return
-    end
-    love.resize(love.graphics.getWidth(), love.graphics.getHeight())
-    logFullscreenColorState('after maximized/windowed toggle')
+  if key == 'f' or key == 'f11' then
+    logFullscreenColorState('before fullscreen toggle')
+    View.toggleFullscreen()
+    logFullscreenColorState('after fullscreen toggle')
     return
   end
 
@@ -2618,6 +2724,16 @@ function love.gamepadaxis(_, axis, value)
   end
 end
 
+-- drawWorld() for screens that don't go through the gameplay camera: puts the
+-- room at its place inside the canvas so the wall frame fills the 16:9 box.
+function drawWorldFramed()
+  local camera = world.camera
+  local savedX, savedY = camera.x, camera.y
+  camera.x, camera.y = -View.ROOM_OFFSET_X, -View.ROOM_OFFSET_Y
+  drawWorld()
+  camera.x, camera.y = savedX, savedY
+end
+
 function drawWorld()
   local camera = world.camera
   local tileSize = world.tileSize
@@ -2845,54 +2961,45 @@ function drawWorld()
     end
   end
 
-  -- Thick concrete walls with exposed pipe accents around the room perimeter.
-  love.graphics.setColor(0.23, 0.24, 0.24, 1)
-  love.graphics.setLineWidth(18)
-  love.graphics.rectangle('line', 9, 9, world.width - 18, world.height - 18)
-  love.graphics.setColor(0.34, 0.3, 0.25, 0.9)
-  love.graphics.setLineWidth(5)
-  love.graphics.line(24, 34, world.width - 24, 34)
-  love.graphics.line(world.width - 34, 34, world.width - 34, world.height - 24)
+  -- Angled stone wall frame (Isaac-style 2.5D perspective). It spans the whole
+  -- canvas (the room plus the 26 px strips above and below it) and surrounds the
+  -- floor rectangle; doors are cut into it. Colours come from the floor's theme.
+  if currentRoom then
+    local wall = View.WALL_THICKNESS
+    local frame = {
+      outerX = -View.ROOM_OFFSET_X,
+      outerY = -View.ROOM_OFFSET_Y,
+      outerWidth = View.CANVAS_WIDTH,
+      outerHeight = View.CANVAS_HEIGHT,
+      innerX = wall,
+      innerY = wall,
+      innerWidth = world.width - wall * 2,
+      innerHeight = world.height - wall * 2,
+      doorLength = View.DOOR_LENGTH,
+    }
 
-  local function drawDoor(direction, x, y, width, height)
-    local destination = rooms[currentRoom.connections[direction]]
-    local locked = doorsLocked or (currentRoom.doors and currentRoom.doors[direction]
-      and currentRoom.doors[direction].locked)
-    local color
-    if destination and destination.roomType == 'shop' then
-      color = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }
-    elseif destination and destination.roomType == 'item' then
-      color = locked and { 0.68, 0.45, 0.08, 1 } or { 1, 0.8, 0.2, 1 }
-    else
-      color = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }
+    local doors = {}
+    for _, direction in ipairs({ 'right', 'left', 'up', 'down' }) do
+      if currentRoom.connections[direction]
+          and not (currentRoom.boss and currentRoom.dealDirection == direction and not currentRoom.dealUnlocked) then
+        local destination = rooms[currentRoom.connections[direction]]
+        local locked = doorsLocked or (currentRoom.doors and currentRoom.doors[direction]
+          and currentRoom.doors[direction].locked)
+        local color
+        if currentRoom.boss and currentRoom.dealDirection == direction then
+          color = { 0.72, 0.18, 0.7, 1 }
+        elseif destination and destination.roomType == 'shop' then
+          color = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }
+        elseif destination and destination.roomType == 'item' then
+          color = locked and { 0.68, 0.45, 0.08, 1 } or { 1, 0.8, 0.2, 1 }
+        else
+          color = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }
+        end
+        doors[#doors + 1] = { side = direction, color = color, locked = locked }
+      end
     end
-    love.graphics.setColor(color)
-    love.graphics.rectangle('fill', x, y, width, height)
-  end
 
-  if currentRoom and currentRoom.connections.right and not (currentRoom.boss and currentRoom.dealDirection == 'right' and not currentRoom.dealUnlocked) then
-    drawDoor('right', world.width - 24, world.height / 2 - 64, 24, 128)
-  end
-  if currentRoom and currentRoom.connections.left and not (currentRoom.boss and currentRoom.dealDirection == 'left' and not currentRoom.dealUnlocked) then
-    drawDoor('left', 0, world.height / 2 - 64, 24, 128)
-  end
-  if currentRoom and currentRoom.connections.up and not (currentRoom.boss and currentRoom.dealDirection == 'up' and not currentRoom.dealUnlocked) then
-    drawDoor('up', world.width / 2 - 64, 0, 128, 24)
-  end
-  if currentRoom and currentRoom.connections.down and not (currentRoom.boss and currentRoom.dealDirection == 'down' and not currentRoom.dealUnlocked) then
-    drawDoor('down', world.width / 2 - 64, world.height - 24, 128, 24)
-  end
-  if currentRoom and currentRoom.boss and currentRoom.dealUnlocked and currentRoom.dealDirection then
-    love.graphics.setColor(0.72, 0.18, 0.7, 1)
-    if currentRoom.dealDirection == 'right' then
-      love.graphics.rectangle('fill', world.width - 24, world.height / 2 - 64, 24, 128)
-    elseif currentRoom.dealDirection == 'left' then
-      love.graphics.rectangle('fill', 0, world.height / 2 - 64, 24, 128)
-    elseif currentRoom.dealDirection == 'up' then
-      love.graphics.rectangle('fill', world.width / 2 - 64, 0, 128, 24)
-    else
-      love.graphics.rectangle('fill', world.width / 2 - 64, world.height - 24, 128, 24)
-    end
+    renderer:drawRoomFrame(Rooms.getWallTheme(world.floorType, currentRoom.roomType), frame, doors)
   end
   if ladder then
     drawLadder()
@@ -2900,10 +3007,10 @@ function drawWorld()
   drawFloorBanner()
   if isShop or isCultistDeal then
     love.graphics.setColor(isShop and 0.95 or 0.76, isShop and 0.72 or 0.22, isShop and 0.2 or 0.8, 1)
-    love.graphics.rectangle('fill', world.width / 2 - 110, 56, 220, 44)
+    love.graphics.rectangle('fill', world.width / 2 - 110, 76, 220, 44)
     love.graphics.setColor(0.06, 0.04, 0.03, 1)
     love.graphics.setFont(renderer.smallFont)
-    love.graphics.printf(isShop and 'SHOPKEEPER' or 'CULTIST DEAL', world.width / 2 - 110, 69, 220, 'center')
+    love.graphics.printf(isShop and 'SHOPKEEPER' or 'CULTIST DEAL', world.width / 2 - 110, 89, 220, 'center')
   end
   love.graphics.pop()
   love.graphics.setLineWidth(1)
@@ -3188,22 +3295,17 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   acidProjectiles = {}
   ladder = nil
   spawnRoomEnemies(currentRoom)
+  local startX, startY = world.width / 2, world.height / 2
   if entryDirection == 'left' then
-    player.x = world.width - 120
-    player.y = world.height / 2
+    startX = world.width - View.ENTRY_OFFSET
   elseif entryDirection == 'right' then
-    player.x = 120
-    player.y = world.height / 2
+    startX = View.ENTRY_OFFSET
   elseif entryDirection == 'up' then
-    player.x = world.width / 2
-    player.y = world.height - 120
+    startY = world.height - View.ENTRY_OFFSET
   elseif entryDirection == 'down' then
-    player.x = world.width / 2
-    player.y = 120
-  else
-    player.x = world.width / 2
-    player.y = world.height / 2
+    startY = View.ENTRY_OFFSET
   end
+  player.x, player.y = startX, startY
 
   if currentRoom.boss and not currentRoom.cleared and not skipBossIntro then
     stopBasementMusic(true)
@@ -3253,54 +3355,41 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
 end
 
 function tryRoomTransition()
-  if not currentRoom then
-    return false
-  end
-
-  if currentRoom.boss and not currentRoom.dealUnlocked then
+  if not currentRoom or (currentRoom.boss and not currentRoom.dealUnlocked) then
     return false
   end
 
   local direction
-  if player.x >= world.width - 104 and currentRoom.connections.right then
-    direction = 'right'
-  elseif player.x <= 104 and currentRoom.connections.left then
-    direction = 'left'
-  elseif player.y <= 104 and currentRoom.connections.up then
-    direction = 'up'
-  elseif player.y >= world.height - 104 and currentRoom.connections.down then
-    direction = 'down'
-  end
-
   if currentRoom.boss then
-    direction = currentRoom.dealDirection
-    local atDoor = direction == 'right' and player.x >= world.width - 104
-      or direction == 'left' and player.x <= 104
-      or direction == 'up' and player.y <= 104
-      or direction == 'down' and player.y >= world.height - 104
-    if not atDoor then
-      return false
+    direction = currentRoom.dealDirection -- boss rooms only exit through the deal door
+  else
+    for _, candidate in ipairs({ 'right', 'left', 'up', 'down' }) do
+      if currentRoom.connections[candidate] then
+        if View.atDoor(candidate) then
+          direction = candidate
+          break
+        end
+      end
     end
   end
 
-  if not direction then
+  if not direction or not View.atDoor(direction) then
     return false
   end
 
-  enterRoom(currentRoom.connections[direction], direction == 'right' and 'right'
-    or direction == 'left' and 'left'
-    or direction == 'up' and 'up'
-    or 'down')
+  enterRoom(currentRoom.connections[direction], direction)
   return true
 end
 
 function love.mousemoved(x, y)
+  x, y = View.toCanvas(x, y)
   if gameState == 'title' then
     mainMenu:mousemoved(x, y)
   end
 end
 
 function love.mousepressed(x, y, button)
+  x, y = View.toCanvas(x, y)
   if gameState == 'opening_cutscene' or gameState == 'cutscene_fallback' then
     finishOpeningCutscene()
     return

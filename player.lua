@@ -277,8 +277,10 @@ function Player:update(dt, input, world)
 
   local halfWidth = self.width / 2
   local halfHeight = self.height / 2
-  self.x = clamp(self.x, halfWidth, world.width - halfWidth)
-  self.y = clamp(self.y, halfHeight, world.height - halfHeight)
+  -- Stop at the inner face of the walls (world.wall px thick), not the room edge.
+  local wall = world.wall or 0
+  self.x = clamp(self.x, halfWidth + wall, world.width - halfWidth - wall)
+  self.y = clamp(self.y, halfHeight + wall, world.height - halfHeight - wall)
 
   if world.camera then
     local camera = world.camera

@@ -29,6 +29,11 @@ local function formatStat(value)
   return string.format('%.1f', value):gsub('%.0$', '')
 end
 
+-- The HUD floats directly on the angled stone wall frame (no sidebars), so it
+-- hugs the canvas edge. HUD_ALPHA lets the brick texture show through it.
+local HUD_MARGIN = 16
+local HUD_ALPHA = 0.88
+
 function Renderer.new(atlas)
   LilSnake.load()
   local renderer = setmetatable({ atlas = atlas }, Renderer)
@@ -151,6 +156,7 @@ function Renderer.new(atlas)
   renderer.smallFont = love.graphics.newFont('resources/font/smallfont.ttf', 14)
   renderer.hudFont = love.graphics.newFont('resources/font/smallfont.ttf', 20)
   renderer.coinsFont = love.graphics.newFont('resources/font/smallfont.ttf', 28)
+  renderer.statFont = love.graphics.newFont('resources/font/smallfont.ttf', 16)
   renderer.bossHealthTail = 1
   renderer.bossHealthIdentity = nil
 
@@ -198,7 +204,7 @@ function Renderer:drawBossHealthBar(boss)
   local panelX = (screenWidth - width) / 2
   local x = panelX + nameWidth + 8
   local height = 18
-  local y = love.graphics.getHeight() - 42
+  local y = love.graphics.getHeight() - 56
   local label = boss.kind == 'lilsnake' and "LIL' SNAKE"
     or boss.kind == 'geometric' and 'THE GEOMETRIC'
     or boss.kind == 'stuffing' and 'THE STUFFING' or 'THE CRAWLER'
@@ -539,7 +545,7 @@ end
 function Renderer:drawStationaryAngel(angel, camera)
   local screenX = angel.beamX - camera.x
   local beamWidth = angel.beamWidth
-  local floorY = (angel.beamBottom or 960) - camera.y
+  local floorY = (angel.beamBottom or 704) - camera.y -- 704 = room height
   local topY = -256 -- origin sits well above the top edge of the screen
 
   if angel:isTelegraphing() then
@@ -954,28 +960,259 @@ function Renderer:drawBossIntro(bossType, progress)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
-function Renderer:drawHud(player, items)
-  local hudScale = 1.25
-  local heartSpacing = 34 * hudScale
-  local statRowSpacing = 36 * hudScale
-  local statIconSize = 32 * hudScale
-  local health = math.max(0, player.stats.health)
-  local maxHealth = math.max(0, player.stats.maxHealth)
-  local heartCount = math.ceil(maxHealth / 20)
+-- ---------------------------------------------------------------------------
+-- Angled stone wall frame (Isaac-style 2.5D perspective)
+--
+-- The frame is four trapezoids joined by 45 degree mitres, like a picture
+-- frame: the OUTER edge is the canvas border, the INNER edge is the floor. A
+-- point on a band is addressed by (u, v): u runs along the wall (0..1), v runs
+-- from the outer edge (0) to the floor edge (1). Because the outer edge is
+-- longer than the inner edge, brick joints (constant u) lean toward the room
+-- centre and the courses (constant v) get shorter toward the floor, which is
+-- what gives the walls their slanted, thick look.
+-- ---------------------------------------------------------------------------
+local WALL_SIDES = { 'up', 'left', 'right', 'down' }
+local WALL_LIGHT = { up = 1.0, left = 0.8, right = 0.72, down = 0.56 } -- face lighting per wall
+local WALL_CAP_DEPTH = 0.2 -- outer share of each band that is the lit top surface of the wall
+local WALL_ROWS = 3
+local WALL_COLUMNS = { up = 24, down = 24, left = 12, right = 12 }
+local quadBuffer = {}
 
-  local hudTop = math.floor(math.max(24, love.graphics.getHeight() / 2 - 178))
-  local hudX = 24
+-- Outer edge (start, end) then floor edge (start, end) of one wall band.
+local function bandGeometry(frame, side)
+  local ox, oy, ow, oh = frame.outerX, frame.outerY, frame.outerWidth, frame.outerHeight
+  local ix, iy, iw, ih = frame.innerX, frame.innerY, frame.innerWidth, frame.innerHeight
+  if side == 'up' then
+    return { ox, oy, ox + ow, oy, ix, iy, ix + iw, iy }
+  elseif side == 'down' then
+    return { ox, oy + oh, ox + ow, oy + oh, ix, iy + ih, ix + iw, iy + ih }
+  elseif side == 'left' then
+    return { ox, oy, ox, oy + oh, ix, iy, ix, iy + ih }
+  end
+  return { ox + ow, oy, ox + ow, oy + oh, ix + iw, iy, ix + iw, iy + ih }
+end
 
+local function bandPoint(geometry, u, v)
+  local outerX = geometry[1] + (geometry[3] - geometry[1]) * u
+  local outerY = geometry[2] + (geometry[4] - geometry[2]) * u
+  local innerX = geometry[5] + (geometry[7] - geometry[5]) * u
+  local innerY = geometry[6] + (geometry[8] - geometry[6]) * u
+  return outerX + (innerX - outerX) * v, outerY + (innerY - outerY) * v
+end
+
+-- Fills `quadBuffer` with the 4 corners of the (u0..u1, v0..v1) patch.
+local function bandQuad(geometry, u0, u1, v0, v1)
+  quadBuffer[1], quadBuffer[2] = bandPoint(geometry, u0, v0)
+  quadBuffer[3], quadBuffer[4] = bandPoint(geometry, u1, v0)
+  quadBuffer[5], quadBuffer[6] = bandPoint(geometry, u1, v1)
+  quadBuffer[7], quadBuffer[8] = bandPoint(geometry, u0, v1)
+  return quadBuffer
+end
+
+local function fillBand(geometry, u0, u1, v0, v1)
+  love.graphics.polygon('fill', bandQuad(geometry, u0, u1, v0, v1))
+end
+
+local function setShaded(color, factor, alpha)
+  love.graphics.setColor(
+    math.min(1, color[1] * factor), math.min(1, color[2] * factor), math.min(1, color[3] * factor), alpha or 1
+  )
+end
+
+-- Deterministic 0..1 noise so each brick keeps its own shade every frame.
+local function brickNoise(a, b, c)
+  local value = math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453
+  return value - math.floor(value)
+end
+
+local function drawWallBand(theme, geometry, side, sideIndex)
+  local light = WALL_LIGHT[side]
+
+  -- Mortar underlay for the whole band.
+  setShaded(theme.mortar, light)
+  fillBand(geometry, 0, 1, 0, 1)
+
+  -- Lit top surface (cap) along the outer edge.
+  setShaded(theme.cap, light)
+  fillBand(geometry, 0, 1, 0, WALL_CAP_DEPTH - 0.025)
+
+  -- Brick courses between the cap and the floor, in running bond.
+  local columns = WALL_COLUMNS[side]
+  local gapU = 0.14 / columns
+  local gapV = 0.05 / WALL_ROWS
+  for row = 0, WALL_ROWS - 1 do
+    local v0 = WALL_CAP_DEPTH + (1 - WALL_CAP_DEPTH) * row / WALL_ROWS
+    local v1 = WALL_CAP_DEPTH + (1 - WALL_CAP_DEPTH) * (row + 1) / WALL_ROWS
+    local offset = row % 2 == 1 and 0.5 or 0
+    for column = 0, columns do
+      local u0 = (column - offset) / columns
+      local u1 = u0 + 1 / columns
+      local from = math.max(0, u0 + gapU)
+      local to = math.min(1, u1 - gapU)
+      if to > from then
+        -- Rows nearer the floor are a touch lighter, like light falling down the face.
+        local shade = light * (0.88 + 0.24 * brickNoise(sideIndex, row, column))
+          * (0.94 + 0.06 * (row / (WALL_ROWS - 1)))
+        setShaded(theme.face, shade)
+        fillBand(geometry, from, to, v0 + gapV, v1 - gapV)
+      end
+    end
+  end
+
+  -- Bevel along the floor edge and a dark line along the outer edge.
+  local floorX0, floorY0 = bandPoint(geometry, 0, 1)
+  local floorX1, floorY1 = bandPoint(geometry, 1, 1)
+  setShaded(theme.cap, light * 1.15, 0.9)
+  love.graphics.setLineWidth(2)
+  love.graphics.line(floorX0, floorY0, floorX1, floorY1)
+  setShaded(theme.mortar, 0.6)
+  local capX0, capY0 = bandPoint(geometry, 0, WALL_CAP_DEPTH - 0.012)
+  local capX1, capY1 = bandPoint(geometry, 1, WALL_CAP_DEPTH - 0.012)
+  love.graphics.line(capX0, capY0, capX1, capY1)
+end
+
+-- A doorway cut through the band: stone jamb, dark passage, then the door
+-- (solid when locked, an open threshold strip when unlocked).
+local function drawWallDoor(theme, geometry, door, frame)
+  local innerStart, innerLength, doorCenter
+  if door.side == 'up' or door.side == 'down' then
+    innerStart, innerLength = frame.innerX, frame.innerWidth
+    doorCenter = frame.innerX + frame.innerWidth / 2
+  else
+    innerStart, innerLength = frame.innerY, frame.innerHeight
+    doorCenter = frame.innerY + frame.innerHeight / 2
+  end
+  local half = frame.doorLength / 2
+  local u0 = (doorCenter - half - innerStart) / innerLength
+  local u1 = (doorCenter + half - innerStart) / innerLength
+  local jamb = 0.012
+  local color = door.color
+
+  setShaded(theme.mortar, 0.45)
+  fillBand(geometry, u0 - jamb, u1 + jamb, 0, 1)
+  love.graphics.setColor(0.015, 0.012, 0.018, 1)
+  fillBand(geometry, u0, u1, 0, 1)
+
+  if door.locked then
+    love.graphics.setColor(color[1], color[2], color[3], 1)
+    fillBand(geometry, u0 + 0.006, u1 - 0.006, 0.12, 1)
+    love.graphics.setColor(color[1] * 1.35, color[2] * 1.35, color[3] * 1.35, 0.9)
+    love.graphics.setLineWidth(2)
+    local seamX0, seamY0 = bandPoint(geometry, (u0 + u1) / 2, 0.12)
+    local seamX1, seamY1 = bandPoint(geometry, (u0 + u1) / 2, 1)
+    love.graphics.line(seamX0, seamY0, seamX1, seamY1)
+    local barX0, barY0 = bandPoint(geometry, u0 + 0.006, 0.55)
+    local barX1, barY1 = bandPoint(geometry, u1 - 0.006, 0.55)
+    love.graphics.line(barX0, barY0, barX1, barY1)
+  else
+    love.graphics.setColor(color[1], color[2], color[3], 0.9)
+    fillBand(geometry, u0, u1, 0.82, 1)
+    love.graphics.setColor(color[1] * 1.3, color[2] * 1.3, color[3] * 1.3, 0.95)
+    love.graphics.setLineWidth(3)
+    local postX0, postY0 = bandPoint(geometry, u0, 0)
+    local postX1, postY1 = bandPoint(geometry, u0, 1)
+    local postX2, postY2 = bandPoint(geometry, u1, 0)
+    local postX3, postY3 = bandPoint(geometry, u1, 1)
+    love.graphics.line(postX0, postY0, postX1, postY1)
+    love.graphics.line(postX2, postY2, postX3, postY3)
+  end
+end
+
+-- Draws the whole frame in room coordinates (the caller has already applied the
+-- camera/room offset). `frame` gives the outer rectangle (the canvas edge), the
+-- inner rectangle (the floor) and the door opening length; `doors` is a list of
+-- { side, color, locked }.
+function Renderer:drawRoomFrame(theme, frame, doors)
+  local previousLineWidth = love.graphics.getLineWidth()
+  local geometries = {}
+  for index, side in ipairs(WALL_SIDES) do
+    geometries[side] = bandGeometry(frame, side)
+    drawWallBand(theme, geometries[side], side, index)
+  end
+
+  -- Mitred corner seams.
+  setShaded(theme.mortar, 0.5)
+  love.graphics.setLineWidth(3)
+  local corners = {
+    { frame.outerX, frame.outerY, frame.innerX, frame.innerY },
+    { frame.outerX + frame.outerWidth, frame.outerY, frame.innerX + frame.innerWidth, frame.innerY },
+    { frame.outerX, frame.outerY + frame.outerHeight, frame.innerX, frame.innerY + frame.innerHeight },
+    {
+      frame.outerX + frame.outerWidth, frame.outerY + frame.outerHeight,
+      frame.innerX + frame.innerWidth, frame.innerY + frame.innerHeight,
+    },
+  }
+  for _, corner in ipairs(corners) do
+    love.graphics.line(corner[1], corner[2], corner[3], corner[4])
+  end
+
+  for _, door in ipairs(doors or {}) do
+    drawWallDoor(theme, geometries[door.side], door, frame)
+  end
+
+  -- Optional themed glow (embers, sky light) that gently pulses over the stone.
+  if theme.glow then
+    local pulse = 0.75 + 0.25 * math.sin(love.timer.getTime() * 3)
+    love.graphics.setColor(theme.glow[1], theme.glow[2], theme.glow[3], theme.glow[4] * pulse)
+    for _, side in ipairs(WALL_SIDES) do
+      fillBand(geometries[side], 0, 1, 0, 1)
+    end
+  end
+
+  -- Soft contact shadow the walls throw onto the floor.
+  local ix, iy, iw, ih = frame.innerX, frame.innerY, frame.innerWidth, frame.innerHeight
+  for step = 0, 7 do
+    local alpha = 0.34 * (1 - step / 8)
+    local offset = step * 3
+    love.graphics.setColor(0, 0, 0, alpha)
+    love.graphics.rectangle('fill', ix, iy + offset, iw, 3)
+    love.graphics.rectangle('fill', ix + offset, iy, 3, ih)
+    love.graphics.rectangle('fill', ix + iw - offset - 3, iy, 3, ih)
+    love.graphics.rectangle('fill', ix, iy + ih - offset - 3, iw, 3)
+  end
+
+  love.graphics.setLineWidth(previousLineWidth)
   love.graphics.setColor(1, 1, 1, 1)
+end
+
+
+-- Draws text with a 1 px drop shadow so it stays readable over brick.
+local function printShadowed(text, x, y, alpha)
+  love.graphics.setColor(0, 0, 0, 0.65 * alpha)
+  love.graphics.print(text, x + 1, y + 1)
+  love.graphics.setColor(1, 1, 1, alpha)
+  love.graphics.print(text, x, y)
+end
+
+-- Everything here floats on the stone walls: hearts top-right, stats hugging the
+-- left wall, coins under the hearts, inventory along the bottom wall. Each element
+-- is slightly transparent so the bricks stay faintly visible beneath it.
+function Renderer:drawHud(player, items)
+  local screenWidth, screenHeight = love.graphics.getDimensions()
+  local rightEdge = screenWidth - HUD_MARGIN
+
+  -- Hearts: top-right, right-aligned, wrapping after 10 per row.
+  local hudScale = 1.25
+  local heartSize = 32 * hudScale
+  local heartSpacing = heartSize + 2
+  local heartsPerRow = 10
+  local health = math.max(0, player.stats.health)
+  local heartCount = math.ceil(math.max(0, player.stats.maxHealth) / 20)
+  local firstRowCount = math.min(heartCount, heartsPerRow)
+  local heartsLeft = rightEdge - firstRowCount * heartSpacing + (heartSpacing - heartSize)
+  local heartsTop = HUD_MARGIN
+  love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   for index = 1, heartCount do
     local heartValue = health - (index - 1) * 20
-    local quad = heartValue >= 20 and self.heartQuads.full or self.heartQuads.half
     if heartValue > 0 then
+      local quad = heartValue >= 20 and self.heartQuads.full or self.heartQuads.half
+      local column = (index - 1) % heartsPerRow
+      local row = math.floor((index - 1) / heartsPerRow)
       love.graphics.draw(
         self.heartsImage,
         quad,
-        math.floor(hudX + (index - 1) * heartSpacing),
-        hudTop,
+        math.floor(heartsLeft + column * heartSpacing),
+        math.floor(heartsTop + row * (heartSize + 4)),
         0,
         hudScale,
         hudScale
@@ -983,64 +1220,70 @@ function Renderer:drawHud(player, items)
     end
   end
 
-  local minimapX = love.graphics.getWidth() - 220 - 16
-  local minimapWidth = 220
-  local minimapBottom = 16 + 172
-  local coinsY = minimapBottom + 8
+  -- Coins: right-aligned, directly under the hearts.
+  local heartRows = math.max(1, math.ceil(heartCount / heartsPerRow))
+  local coinsY = heartsTop + heartRows * (heartSize + 4) + 2
   local coinsIconScale = 1.5
   local coinsText = tostring(player.stats.dollars or 0)
   local coinsGap = 8
   local coinsWidth = self.coinsIcon:getWidth() * coinsIconScale
     + coinsGap + self.coinsFont:getWidth(coinsText)
-  local coinsX = minimapX + (minimapWidth - coinsWidth) / 2
-  love.graphics.setColor(1, 1, 1, 1)
+  local coinsX = math.floor(rightEdge - coinsWidth)
+  love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   love.graphics.draw(self.coinsIcon, coinsX, coinsY, 0, coinsIconScale, coinsIconScale)
   love.graphics.setFont(self.coinsFont)
-  love.graphics.print(
+  printShadowed(
     coinsText,
-    coinsX + self.coinsIcon:getWidth() * coinsIconScale + coinsGap,
-    coinsY + (self.coinsIcon:getHeight() * coinsIconScale - self.coinsFont:getHeight()) / 2
+    math.floor(coinsX + self.coinsIcon:getWidth() * coinsIconScale + coinsGap),
+    math.floor(coinsY + (self.coinsIcon:getHeight() * coinsIconScale - self.coinsFont:getHeight()) / 2),
+    HUD_ALPHA
   )
-  love.graphics.setFont(self.hudFont)
-  local stats = {
-    { key = 'damage', value = function() return tostring(math.floor(player.stats.damage)) end, image = self.statImages.damage },
-    { key = 'speed', value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
-    { key = 'attackSpeed', value = function() return formatStat(player:getAttackSpeed()) end, image = self.statImages.attackSpeed },
-    { key = 'range', value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
-    { key = 'defense', value = function() return tostring(player.stats.defense or 0) end, image = self.statImages.defense },
-  }
-  local statsY = hudTop + 64
-  local statIconSize = 18
-  local statColor = { 1, 0.86, 0.52 }
-  local rowGap = 18
-  local statX = hudX + 8
-  local statY = statsY
-  love.graphics.setFont(self.hudFont)
 
+  -- Stats: a column hugging the left wall, vertically centred. Icon against the
+  -- wall edge, value right of it, so the block stays inside the 64 px wall band.
+  local stats = {
+    { value = function() return tostring(math.floor(player.stats.damage)) end, image = self.statImages.damage },
+    { value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
+    { value = function() return formatStat(player:getAttackSpeed()) end, image = self.statImages.attackSpeed },
+    { value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
+    { value = function() return tostring(player.stats.defense or 0) end, image = self.statImages.defense },
+  }
+  local statRowHeight, statIconSize = 34, 22
+  local statX = 8
+  local statY = math.floor((screenHeight - #stats * statRowHeight) / 2)
+  love.graphics.setFont(self.statFont)
   for _, stat in ipairs(stats) do
     local image = stat.image
     if image then
-      love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.draw(image, math.floor(statX), math.floor(statY), 0, 1, 1)
-      love.graphics.setColor(statColor[1], statColor[2], statColor[3], 1)
-      love.graphics.print(tostring(stat.value()), math.floor(statX + statIconSize + 10), math.floor(statY + 1))
-      statY = statY + rowGap + 12
+      local iconScale = statIconSize / math.max(image:getWidth(), image:getHeight())
+      love.graphics.setColor(1, 1, 1, HUD_ALPHA)
+      love.graphics.draw(image, statX, statY, 0, iconScale, iconScale)
+      printShadowed(
+        stat.value(),
+        statX + statIconSize + 4,
+        math.floor(statY + (statIconSize - self.statFont:getHeight()) / 2),
+        HUD_ALPHA
+      )
+      statY = statY + statRowHeight
     end
   end
+
+  -- Collected items: bottom-left, over the bottom wall, growing upward.
   local inventory = items:getInventoryItems()
   local iconSize = 28
   local iconSpacing = 34
-  local columns = math.max(1, math.floor((love.graphics.getWidth() - hudX * 2) / iconSpacing))
-  local inventoryY = love.graphics.getHeight() - iconSize - 12
+  local columns = 7
+  local inventoryX = HUD_MARGIN + 4
+  local inventoryY = screenHeight - HUD_MARGIN - iconSize
   for index, item in ipairs(inventory) do
     if item.image then
       local column = (index - 1) % columns
       local row = math.floor((index - 1) / columns)
       local scale = iconSize / math.max(item.image:getWidth(), item.image:getHeight())
-      love.graphics.setColor(1, 1, 1, 0.9)
+      love.graphics.setColor(1, 1, 1, HUD_ALPHA)
       love.graphics.draw(
         item.image,
-        hudX + column * iconSpacing,
+        inventoryX + column * iconSpacing,
         inventoryY - row * iconSpacing,
         0,
         scale,
@@ -1051,21 +1294,22 @@ function Renderer:drawHud(player, items)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Active item: bottom-right corner, over the bottom wall.
 function Renderer:drawActiveItem(item, cooldownRemaining)
   if not item or not item.image then
     return
   end
 
+  local screenWidth, screenHeight = love.graphics.getDimensions()
   local iconSize = 64
-  local padding = 16
-  local x = love.graphics.getWidth() - iconSize - padding
-  local y = padding
+  local x = screenWidth - HUD_MARGIN - 5 - iconSize
+  local y = screenHeight - HUD_MARGIN - 29 - iconSize
   local remaining = math.max(0, cooldownRemaining or 0)
   local cooldown = item.cooldown or 0
 
-  love.graphics.setColor(0.08, 0.045, 0.025, 0.9)
+  love.graphics.setColor(0.08, 0.045, 0.025, 0.6)
   love.graphics.rectangle('fill', x - 5, y - 5, iconSize + 10, iconSize + 34, 6, 6)
-  love.graphics.setColor(1, 1, 1, remaining > 0 and 0.55 or 1)
+  love.graphics.setColor(1, 1, 1, (remaining > 0 and 0.55 or 1) * HUD_ALPHA)
   local scale = iconSize / math.max(item.image:getWidth(), item.image:getHeight())
   love.graphics.draw(item.image, x, y, 0, scale, scale)
   if remaining > 0 and cooldown > 0 then
@@ -1075,7 +1319,7 @@ function Renderer:drawActiveItem(item, cooldownRemaining)
   end
 
   love.graphics.setFont(self.smallFont)
-  love.graphics.setColor(0.98, 0.82, 0.56, 1)
+  love.graphics.setColor(0.98, 0.82, 0.56, HUD_ALPHA)
   love.graphics.printf(
     remaining > 0 and string.format('%.1fs', remaining) or 'READY',
     x - 5,
@@ -1083,7 +1327,7 @@ function Renderer:drawActiveItem(item, cooldownRemaining)
     iconSize + 10,
     'center'
   )
-  love.graphics.setColor(0.9, 0.82, 0.68, 0.9)
+  love.graphics.setColor(0.9, 0.82, 0.68, HUD_ALPHA)
   love.graphics.printf('Q: USE', x - 5, y + iconSize + 21, iconSize + 10, 'center')
   love.graphics.setColor(1, 1, 1, 1)
 end
@@ -1139,12 +1383,12 @@ function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
     return
   end
 
-  local screenWidth = love.graphics.getWidth()
-  local panelWidth = 220
-  local panelHeight = 172
-  local panelX = screenWidth - panelWidth - 16
-  local panelY = 16
-  local padding = 14
+  -- Top-left, floating on the top and left walls.
+  local panelWidth = 176
+  local panelHeight = 112
+  local panelX = HUD_MARGIN - 4
+  local panelY = HUD_MARGIN - 6
+  local padding = 12
   local maxDistanceX, maxDistanceY = 0, 0
   for _, room in ipairs(rooms) do
     maxDistanceX = math.max(maxDistanceX, math.abs(room.gridX))
@@ -1156,8 +1400,11 @@ function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
   local cellSize = math.floor(math.min((panelWidth - padding * 2) / gridWidth, (panelHeight - padding * 2) / gridHeight))
   cellSize = math.max(8, math.min(22, cellSize))
 
-  love.graphics.setColor(0.03, 0.04, 0.05, 0.72)
+  love.graphics.setColor(0.03, 0.04, 0.05, 0.5)
   love.graphics.rectangle('fill', panelX, panelY, panelWidth, panelHeight)
+  love.graphics.setColor(0.65, 0.68, 0.7, 0.35)
+  love.graphics.setLineWidth(1)
+  love.graphics.rectangle('line', panelX + 0.5, panelY + 0.5, panelWidth - 1, panelHeight - 1)
   love.graphics.setLineWidth(2)
 
   local function roomPosition(room)
