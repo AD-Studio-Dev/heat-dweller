@@ -303,6 +303,7 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
   end
   seed = seed or os.time()
   local random = makeRandom(seed)
+  for _ = 1, 4 do random() end -- warm up the LCG so nearby seeds don't give similar floors
   local rooms = {}
   local occupied = {}
   local frontier = {}
@@ -461,6 +462,31 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
     room.doors = {}
     for direction, connectedId in pairs(room.connections) do
       room.doors[direction] = { roomId = connectedId, locked = false }
+    end
+  end
+
+  -- Each Shop / Item room gets exactly ONE special doorway: the one toward its
+  -- lowest-numbered neighbour (closest to the start, i.e. the main path). Both
+  -- sides of that doorway are tagged, so it looks special from outside and inside;
+  -- every other doorway stays a normal door.
+  for _, room in ipairs(rooms) do
+    local kind = (room.roomType == 'shop' or room.roomType == 'item') and room.roomType or nil
+    if kind then
+      local bestDirection, bestId
+      for direction, connectedId in pairs(room.connections) do
+        if not bestId or connectedId < bestId then
+          bestDirection, bestId = direction, connectedId
+        end
+      end
+      if bestDirection then
+        room.doors[bestDirection].kind = kind
+        local neighbour = rooms[bestId]
+        for direction, connectedId in pairs(neighbour.connections) do
+          if connectedId == room.id then
+            neighbour.doors[direction].kind = kind
+          end
+        end
+      end
     end
   end
 

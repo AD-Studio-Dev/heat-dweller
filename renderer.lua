@@ -45,10 +45,12 @@ local DOOR_SHEET_PATHS = {
   normal = 'resources/gfx/grid/doors_001_basementdoor.png',
   boss = 'resources/gfx/grid/doors_002_bossdoor.png',
   shop = 'resources/gfx/grid/doors_003_shopdoor.png',
+  itemroom = 'resources/gfx/grid/doors_004_itemroomdoor.png',
+  shoproom = 'resources/gfx/grid/doors_005_shoproomdoor.png',
 }
 -- Which sheet each kind of door uses (kind comes from main.lua's door list).
 local DOOR_SHEET_FOR_KIND = {
-  normal = 'normal', boss = 'boss', deal = 'boss', shop = 'shop', item = 'shop',
+  normal = 'normal', boss = 'boss', deal = 'boss', shop = 'shoproom', item = 'itemroom',
 }
 local DOOR_FRAME_SIZE, DOOR_SCALE, DOOR_FRAME_SECONDS = 32, 2, 0.1
 local DOOR_ROTATION = { up = 0, right = math.pi / 2, down = math.pi, left = -math.pi / 2 }

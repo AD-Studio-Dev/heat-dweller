@@ -635,14 +635,18 @@ end
 
 local function createBossDefeatTone()
   local sampleRate = 22050
-  local sampleCount = math.floor(sampleRate * 0.8)
+  -- Four rising notes (C5 E5 G5 C6). The old 180 Hz sweep was nearly inaudible on
+  -- laptop speakers.
+  local notes = { 523.25, 659.25, 783.99, 1046.5 }
+  local samplesPerNote = math.floor(sampleRate * 0.2)
+  local sampleCount = samplesPerNote * #notes
   local soundData = love.sound.newSoundData(sampleCount, sampleRate, 16, 1)
 
   for sample = 0, sampleCount - 1 do
-    local progress = sample / sampleCount
-    local frequency = 180 - (180 * progress)
-    local envelope = math.max(0, 1 - progress)
-    local value = math.sin(2 * math.pi * frequency * sample / sampleRate) * envelope * 0.46
+    local noteIndex = math.floor(sample / samplesPerNote) + 1
+    local progress = (sample % samplesPerNote) / samplesPerNote
+    local envelope = (1 - progress) ^ 1.5
+    local value = math.sin(2 * math.pi * notes[noteIndex] * sample / sampleRate) * envelope * 0.4
     soundData:setSample(sample, 1, value)
   end
 
@@ -1072,14 +1076,22 @@ local function initializeAudio()
   local bossDefeatPaths = {
     'resources/music/sfx/beatbosswin.wav',
     'resources/music/music/beatbosswin.wav',
+    'resources/music/sfx/beatbosswin.ogg',
+    'resources/music/music/beatbosswin.ogg',
   }
   for _, bossDefeatPath in ipairs(bossDefeatPaths) do
     if love.filesystem.getInfo(bossDefeatPath) then
-      bossDefeatSound = registerSfxSource(love.audio.newSource(bossDefeatPath, 'static'))
-      break
+      local loaded, source = pcall(love.audio.newSource, bossDefeatPath, 'static')
+      if loaded then
+        bossDefeatSound = registerSfxSource(source)
+        print('Boss defeat sound loaded: ' .. bossDefeatPath)
+        break
+      end
+      print('Boss defeat sound failed to load (' .. bossDefeatPath .. '): ' .. tostring(source))
     end
   end
   if not bossDefeatSound then
+    print('beatbosswin sound not found or unreadable; using the built-in chime instead.')
     bossDefeatSound = createBossDefeatTone()
   end
   local floorTransitionPaths = {
@@ -1126,6 +1138,12 @@ local function initializeMenu()
 end
 
 function love.load()
+  -- Dynamic seeding: LuaJIT's math.random is NOT auto-seeded by LOVE, so without this every
+  -- launch replays the same sequence (and therefore the same floors). Mix time + clock.
+  local launchSeed = os.time() + math.floor((love.timer.getTime() % 1) * 1000000)
+  math.randomseed(launchSeed)
+  love.math.setRandomSeed(launchSeed)
+  for _ = 1, 8 do math.random() end -- discard the weakly mixed first values
   -- Pixel art stays razor sharp: this must run before ANY image/canvas/font is
   -- created. The window starts borderless (conf.lua) and is sized to the desktop
   -- here, before any resource exists, since setMode can recreate the GL context.
@@ -1958,16 +1976,7 @@ function love.update(dt)
     updateBossDeathParticles(dt)
   end
 
-  if doorsLocked and areAllRoomEnemiesDefeated() then
-    doorsLocked = false
-    currentRoom.cleared = true
-    for _, door in pairs(currentRoom.doors or {}) do
-      door.locked = false
-    end
-    if currentRoom.boss and not ladder and world.floorIndex < #FLOOR_TYPES then
-      ladder = { x = 104, y = 104 }
-    end
-  end
+  openRoomDoorsIfClear()
 
   if currentRoom and currentRoom.boss and currentRoom.dealUnlocked and not roomRewardSpawned then
     items:spawnFloorReward(world.width / 2, world.height / 2)
@@ -3150,11 +3159,14 @@ function drawWorld()
         local locked = doorsLocked or (currentRoom.doors and currentRoom.doors[direction]
           and currentRoom.doors[direction].locked)
         local color, kind
+        -- Per-doorway type assigned in rooms.lua (nil = ordinary door).
+        local doorKind = currentRoom.doors and currentRoom.doors[direction]
+          and currentRoom.doors[direction].kind
         if currentRoom.boss and currentRoom.dealDirection == direction then
           color, kind = { 0.72, 0.18, 0.7, 1 }, 'deal'
-        elseif destination and destination.roomType == 'shop' then
+        elseif doorKind == 'shop' then
           color, kind = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }, 'shop'
-        elseif destination and destination.roomType == 'item' then
+        elseif doorKind == 'item' then
           color, kind = locked and { 0.68, 0.45, 0.08, 1 } or { 1, 0.8, 0.2, 1 }, 'item'
         elseif destination and destination.roomType == 'boss' then
           color, kind = locked and { 0.45, 0.12, 0.08, 1 } or { 0.2, 0.75, 0.35, 1 }, 'boss'
@@ -3261,6 +3273,15 @@ function startBossDeathSequence(boss)
     return
   end
 
+  -- Win sound first, before anything below can get in its way.
+  if bossDefeatSound then
+    bossDefeatSound:stop()
+    bossDefeatSound:setVolume(audioSfxVolume)
+    bossDefeatSound:play()
+  else
+    print('Boss defeat sound is missing, nothing to play.')
+  end
+
   boss.isDying = true
   boss.deathSequence = {
     duration = 1.8,
@@ -3276,16 +3297,29 @@ function startBossDeathSequence(boss)
   saveProfile()
   refreshMenuExtras()
 
-  unlockBossRoom()
+  -- Doors, ladder, reward and the deal room open later, from openRoomDoorsIfClear(),
+  -- once the death sequence is over AND every other enemy in the room is dead.
   hardStopMusicSources()
   bossMusicPhase = nil
-
-  if bossDefeatSound then
-    bossDefeatSound:setVolume(audioSfxVolume)
-    bossDefeatSound:stop()
-    bossDefeatSound:play()
-  end
   triggerScreenShake(14)
+end
+
+-- The single place a room's doors open. Nothing opens until every enemy is dead
+-- (and, in a boss room, the boss's death sequence has finished).
+function openRoomDoorsIfClear()
+  if not doorsLocked or not currentRoom or not areAllRoomEnemiesDefeated() then
+    return false
+  end
+  if currentRoom.boss then
+    unlockBossRoom() -- unlocks doors, opens the deal door, ladder and floor reward
+  else
+    doorsLocked = false
+    currentRoom.cleared = true
+    for _, door in pairs(currentRoom.doors or {}) do
+      door.locked = false
+    end
+  end
+  return true
 end
 
 function updateBossDeathParticles(dt)
@@ -3336,7 +3370,6 @@ function updateBossDeathSequence(dt, boss)
         stuffing = nil
       end
       startFloorMusic()
-      unlockBossRoom()
     end
     return
   end
@@ -3355,11 +3388,16 @@ function areAllRoomEnemiesDefeated()
     end
   end
 
-  return (not crawler or not crawler.alive)
-    and (not lilSnake or not lilSnake.alive)
-    and (not geometric or not geometric.alive)
-    and (not stuffing or not stuffing.alive)
-    and (not babyWidow or not babyWidow.alive)
+  -- A boss variable stays set while it is alive and during its death sequence.
+  if crawler or lilSnake or geometric or stuffing then
+    return false
+  end
+  return not babyWidow or not babyWidow.alive
+end
+
+-- True while a boss is alive or still playing its death sequence.
+function bossBattleOngoing()
+  return (crawler or lilSnake or geometric or stuffing) ~= nil
 end
 
 local function attachGeometricFeedback(boss)
@@ -3533,30 +3571,23 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
 end
 
 function tryRoomTransition()
-  if not currentRoom or (currentRoom.boss and not currentRoom.dealUnlocked) then
+  if not currentRoom or doorsLocked then
     return false
   end
 
-  local direction
-  if currentRoom.boss then
-    direction = currentRoom.dealDirection -- boss rooms only exit through the deal door
-  else
-    for _, candidate in ipairs({ 'right', 'left', 'up', 'down' }) do
-      if currentRoom.connections[candidate] then
-        if View.atDoor(candidate) then
-          direction = candidate
-          break
-        end
-      end
+  for _, candidate in ipairs({ 'right', 'left', 'up', 'down' }) do
+    local connectedId = currentRoom.connections[candidate]
+    local door = currentRoom.doors and currentRoom.doors[candidate]
+    -- The deal door stays hidden (and unusable) until the boss room is unlocked.
+    local hiddenDealDoor = currentRoom.boss and currentRoom.dealDirection == candidate
+      and not currentRoom.dealUnlocked
+    if connectedId and not hiddenDealDoor and not (door and door.locked)
+        and View.atDoor(candidate) then
+      enterRoom(connectedId, candidate)
+      return true
     end
   end
-
-  if not direction or not View.atDoor(direction) then
-    return false
-  end
-
-  enterRoom(currentRoom.connections[direction], direction)
-  return true
+  return false
 end
 
 function love.mousemoved(x, y)
@@ -3649,7 +3680,7 @@ function startGame(debugBossType)
     world.floorType = floorTypeForIndex(world.floorIndex)
     world.roomType = world.floorType
   end
-  runSeed = math.random(1, 2147483646)
+  runSeed = love.math.random(1, 2147483646) -- fresh seed every run (never a constant)
   math.randomseed(runSeed)
   if selectedCharacter.spriteSheetPath then
     renderer:setCharacter(selectedCharacter.spriteSheetPath)
@@ -4065,11 +4096,11 @@ function resumeGameAudio()
   end
 
   if world.floorType == 'basement' then
-    if not bossDefeated then
+    if not bossBattleOngoing() then
       restore(basementOscMusic, audioMusicVolume)
     end
   elseif world.floorType == 'kitchen' then
-    if kitchenMusic and not bossDefeated then
+    if kitchenMusic and not bossBattleOngoing() then
       restore(kitchenMusic, audioMusicVolume)
     end
   elseif world.floorType == 'sky' then
@@ -4088,7 +4119,7 @@ function resumeGameAudio()
       return
     end
 
-    if skyMusic and not bossDefeated then
+    if skyMusic and not bossBattleOngoing() then
       restore(skyMusic, audioMusicVolume)
     end
   else
