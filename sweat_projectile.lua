@@ -1,4 +1,5 @@
 local SweatProjectile = {}
+local Knockback = require('knockback')
 
 local projectileSpeed = 480
 local projectileRadius = 7
@@ -103,6 +104,9 @@ function SweatProjectile.updateAll(projectiles, splashes, dt, targets, walls, wo
             if impactTarget.onDeath then
               impactTarget.onDeath()
             end
+          else
+            -- Shove the enemy along the shot's direction; smaller enemies fly farther.
+            Knockback.apply(impactTarget, projectile.vx, projectile.vy)
           end
         end
         spawnSplash(splashes, projectile.x, projectile.y)

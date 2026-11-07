@@ -2,6 +2,8 @@
 ---@diagnostic disable: undefined-global
 local LilSnake = require('lil_snake')
 local Json = require('json')
+local PixelGrid = require('pixelgrid')
+local snap, snapScale = PixelGrid.snap, PixelGrid.snapScale
 local Renderer = {}
 Renderer.__index = Renderer
 
@@ -51,6 +53,28 @@ local DOOR_SHEET_FOR_KIND = {
 local DOOR_FRAME_SIZE, DOOR_SCALE, DOOR_FRAME_SECONDS = 32, 2, 0.1
 local DOOR_ROTATION = { up = 0, right = math.pi / 2, down = math.pi, left = -math.pi / 2 }
 
+-- Optional art: a missing file just means the normal look, never a crash.
+local function loadOptionalImage(path)
+  if not love.filesystem.getInfo(path) then
+    print('Missing image: ' .. path)
+    return nil
+  end
+  local ok, image = pcall(love.graphics.newImage, path)
+  if not ok then
+    print('Could not load ' .. path .. ': ' .. tostring(image))
+    return nil
+  end
+  image:setFilter('nearest', 'nearest')
+  return image
+end
+
+-- Costume sheets drawn over Matthew's sprite sheet (same frame layout), per
+-- evolution (see Player.EVOLUTIONS). Drawn in this order.
+local COSTUMES = {
+  { evolution = 'burnt_chilli', path = 'resources/gfx/characters/costumes/character_003_matthew-blushred.png' },
+}
+local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweatattack_fire.png'
+
 function Renderer.new(atlas)
   LilSnake.load()
   local renderer = setmetatable({ atlas = atlas }, Renderer)
@@ -75,6 +99,11 @@ function Renderer.new(atlas)
   renderer.missingUnknownImage:setFilter('nearest', 'nearest')
   renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
+  renderer.fireSweatImage = loadOptionalImage(FIRE_SWEAT_PATH)
+  renderer.costumeImages = {}
+  for _, costume in ipairs(COSTUMES) do
+    renderer.costumeImages[costume.evolution] = loadOptionalImage(costume.path)
+  end
   renderer.sweatSplashImage:setFilter('nearest', 'nearest')
   renderer.fireFoamImage:setFilter('nearest', 'nearest')
   local fireFoamJson, fireFoamReadError = love.filesystem.read('resources/sprites/attack/firefoam.json')
@@ -327,8 +356,8 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
     local currentCardWidth = cardWidth * scale
     local currentCardHeight = cardHeight * scale
     local cardCenterX = centerX + offset * slotWidth
-    local cardX = math.floor(cardCenterX - currentCardWidth / 2)
-    local cardY = math.floor((height - currentCardHeight) / 2 + 12)
+    local cardX = snap(cardCenterX - currentCardWidth / 2)
+    local cardY = snap((height - currentCardHeight) / 2 + 12)
     local isLocked = character.isUnlocked == false
     local displayName = isLocked and '???' or (character.name or '?')
     local displaySubtitle = isLocked and '???' or (character.title or character.subtitle or '???')
@@ -359,7 +388,7 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
     if image then
       image:setFilter('nearest', 'nearest')
       local imageWidth, imageHeight = image:getDimensions()
-      local imageScale = focused and math.min(
+      local imageScale = snapScale(focused and math.min(
         4,
         currentCardWidth * 0.34 / imageWidth,
         currentCardHeight * 0.36 / imageHeight
@@ -367,7 +396,7 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
         2.8,
         currentCardWidth * 0.32 / imageWidth,
         currentCardHeight * 0.3 / imageHeight
-      )
+      ))
       local imageCenterY = focused and cardY + currentCardHeight * 0.31
         or cardY + currentCardHeight * 0.44
       love.graphics.setColor(focused and 1 or 0.52, focused and 1 or 0.52, focused and 1 or 0.52, alpha)
@@ -526,7 +555,7 @@ function Renderer:drawEnemy(enemy, camera)
   end
 
   if enemy.kind == 'centipede' then
-    local scale = (enemy.scale or 1) * 2
+    local scale = snapScale((enemy.scale or 1) * 2)
     local dx = enemy.vx or 0
     local dy = enemy.vy or 0
     if dx == 0 and dy == 0 then
@@ -624,7 +653,7 @@ function Renderer:drawStationaryAngel(angel, camera)
   local image = self.stationaryAngelImage
   local imageWidth, imageHeight = image:getDimensions()
   local displaySize = 128 * (angel.sizeFactor or 1)
-  local scale = displaySize / math.max(imageWidth, imageHeight)
+  local scale = snapScale(displaySize / math.max(imageWidth, imageHeight))
   local intensity = angel.shakeIntensity or 0
   local shakeX = (math.random() * 2 - 1) * intensity
   local shakeY = (math.random() * 2 - 1) * intensity
@@ -636,8 +665,8 @@ function Renderer:drawStationaryAngel(angel, camera)
   end
   love.graphics.draw(
     image,
-    math.floor(angel.x - camera.x + shakeX),
-    math.floor(angel.y - camera.y + bob + shakeY),
+    snap(angel.x - camera.x + shakeX),
+    snap(angel.y - camera.y + bob + shakeY),
     0,
     scale,
     scale,
@@ -675,17 +704,17 @@ function Renderer:drawCrawler(crawler, camera)
   local scale = 3
   if crawler.phaseState == 'rage_pause' then
     love.graphics.setColor(1, 0.28, 0.12, 1)
-    scale = 3.2
+    scale = 3
   elseif crawler.phaseState == 'charging' then
     local pulse = (math.sin(crawler.animationTime * 12) + 1) * 0.2
     love.graphics.setColor(1, 0.25 + pulse, 0.08, 1)
-    scale = 3.3
+    scale = 3
   elseif crawler.phaseState == 'wall_running' then
     love.graphics.setColor(1, 0.18, 0.08, 1)
-    scale = 3.15
+    scale = 3
   elseif crawler.phaseState == 'exhausted' then
     love.graphics.setColor(0.48, 0.72, 1, 1)
-    scale = 2.7
+    scale = 3
   else
     love.graphics.setColor(1, 1, 1, 1)
   end
@@ -1288,7 +1317,7 @@ function Renderer:drawHud(player, items)
   local rightEdge = screenWidth - HUD_MARGIN
 
   -- Hearts: top-right, right-aligned, wrapping after 10 per row.
-  local hudScale = 1.25
+  local hudScale = snapScale(1.25) -- whole-number scale only
   local heartSize = 32 * hudScale
   local heartSpacing = heartSize + 2
   local heartsPerRow = 10
@@ -1318,27 +1347,27 @@ function Renderer:drawHud(player, items)
 
   -- Coins: right-aligned, directly under the hearts.
   local heartRows = math.max(1, math.ceil(heartCount / heartsPerRow))
-  local coinsY = heartsTop + heartRows * (heartSize + 4) + 2
-  local coinsIconScale = 1.5
+  local coinsY = snap(heartsTop + heartRows * (heartSize + 4) + 2)
+  local coinsIconScale = snapScale(1.5)
   local coinsText = tostring(player.stats.dollars or 0)
   local coinsGap = 8
   local coinsWidth = self.coinsIcon:getWidth() * coinsIconScale
     + coinsGap + self.coinsFont:getWidth(coinsText)
-  local coinsX = math.floor(rightEdge - coinsWidth)
+  local coinsX = snap(rightEdge - coinsWidth)
   love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   love.graphics.draw(self.coinsIcon, coinsX, coinsY, 0, coinsIconScale, coinsIconScale)
   love.graphics.setFont(self.coinsFont)
   printShadowed(
     coinsText,
-    math.floor(coinsX + self.coinsIcon:getWidth() * coinsIconScale + coinsGap),
-    math.floor(coinsY + (self.coinsIcon:getHeight() * coinsIconScale - self.coinsFont:getHeight()) / 2),
+    snap(coinsX + self.coinsIcon:getWidth() * coinsIconScale + coinsGap),
+    snap(coinsY + (self.coinsIcon:getHeight() * coinsIconScale - self.coinsFont:getHeight()) / 2),
     HUD_ALPHA
   )
 
   -- Stats: a column hugging the left wall, vertically centred. Icon against the
   -- wall edge, value right of it, so the block stays inside the 64 px wall band.
   local stats = {
-    { value = function() return tostring(math.floor(player.stats.damage)) end, image = self.statImages.damage },
+    { value = function() return tostring(math.floor(player:getDamage())) end, image = self.statImages.damage },
     { value = function() return tostring(math.max(1, math.floor(player.speed / 35))) end, image = self.statImages.speed },
     { value = function() return formatStat(player:getAttackSpeed()) end, image = self.statImages.attackSpeed },
     { value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
@@ -1346,18 +1375,20 @@ function Renderer:drawHud(player, items)
   }
   local statRowHeight, statIconSize = 34, 22
   local statX = 8
-  local statY = math.floor((screenHeight - #stats * statRowHeight) / 2)
+  local statY = snap((screenHeight - #stats * statRowHeight) / 2)
   love.graphics.setFont(self.statFont)
   for _, stat in ipairs(stats) do
     local image = stat.image
     if image then
-      local iconScale = statIconSize / math.max(image:getWidth(), image:getHeight())
+      local iconScale = snapScale(statIconSize / math.max(image:getWidth(), image:getHeight()))
+      local drawnWidth = image:getWidth() * iconScale
+      local drawnHeight = image:getHeight() * iconScale
       love.graphics.setColor(1, 1, 1, HUD_ALPHA)
       love.graphics.draw(image, statX, statY, 0, iconScale, iconScale)
       printShadowed(
         stat.value(),
-        statX + statIconSize + 4,
-        math.floor(statY + (statIconSize - self.statFont:getHeight()) / 2),
+        snap(statX + math.max(statIconSize, drawnWidth) + 4),
+        snap(statY + (drawnHeight - self.statFont:getHeight()) / 2),
         HUD_ALPHA
       )
       statY = statY + statRowHeight
@@ -1375,7 +1406,7 @@ function Renderer:drawHud(player, items)
     if item.image then
       local column = (index - 1) % columns
       local row = math.floor((index - 1) / columns)
-      local scale = iconSize / math.max(item.image:getWidth(), item.image:getHeight())
+      local scale = snapScale(iconSize / math.max(item.image:getWidth(), item.image:getHeight()))
       love.graphics.setColor(1, 1, 1, HUD_ALPHA)
       love.graphics.draw(
         item.image,
@@ -1406,7 +1437,7 @@ function Renderer:drawActiveItem(item, cooldownRemaining)
   love.graphics.setColor(0.08, 0.045, 0.025, 0.6)
   love.graphics.rectangle('fill', x - 5, y - 5, iconSize + 10, iconSize + 34, 6, 6)
   love.graphics.setColor(1, 1, 1, (remaining > 0 and 0.55 or 1) * HUD_ALPHA)
-  local scale = iconSize / math.max(item.image:getWidth(), item.image:getHeight())
+  local scale = snapScale(iconSize / math.max(item.image:getWidth(), item.image:getHeight()))
   love.graphics.draw(item.image, x, y, 0, scale, scale)
   if remaining > 0 and cooldown > 0 then
     local overlayHeight = iconSize * math.min(1, remaining / cooldown)
@@ -1438,7 +1469,7 @@ function Renderer:drawPickupNotification(item, elapsed, duration)
   alpha = math.max(0, alpha)
   local screenWidth = love.graphics.getWidth()
   local panelWidth = math.min(880, screenWidth - 32)
-  local panelX = (screenWidth - panelWidth) / 2
+  local panelX = snap((screenWidth - panelWidth) / 2)
   local textX = panelX + 78
   local textWidth = panelWidth - 96
   local _, lines = self.smallFont:getWrap(item.description or '', textWidth)
@@ -1452,12 +1483,12 @@ function Renderer:drawPickupNotification(item, elapsed, duration)
 
   if item.image then
     local iconSize = 54
-    local scale = iconSize / math.max(item.image:getWidth(), item.image:getHeight())
+    local scale = snapScale(iconSize / math.max(item.image:getWidth(), item.image:getHeight()))
     love.graphics.setColor(1, 1, 1, alpha)
     love.graphics.draw(
       item.image,
       panelX + 14,
-      16 + (panelHeight - iconSize) / 2,
+      snap(16 + (panelHeight - iconSize) / 2),
       0,
       scale,
       scale
@@ -1556,7 +1587,7 @@ function Renderer:drawPlayer(player, camera)
   if skyForm then
     local bobAmplitude = 2.4
     local bobSpeed = 4.2
-    drawY = drawY + math.sin(love.timer.getTime() * bobSpeed) * bobAmplitude
+    drawY = snap(drawY + math.sin(love.timer.getTime() * bobSpeed) * bobAmplitude)
   end
 
   -- A negative scale mirrors around the draw point, so move left-facing
@@ -1571,9 +1602,20 @@ function Renderer:drawPlayer(player, camera)
     alpha = 0.35
   end
   love.graphics.setColor(1, 1, 1, alpha)
-  self:drawFrame(player:getBodyFrame(), drawX, drawY, scaleX, scale)
+  -- Costume overlays only fit Matthew's own sheet, not Stella's or the angel form.
+  local costumable = not skyForm and self.atlas.imagePath
+    and string.find(self.atlas.imagePath, 'matthew', 1, true) ~= nil
+  local bodyFrame, headFrame = player:getBodyFrame(), player:getHeadFrame()
+
+  self:drawFrame(bodyFrame, drawX, drawY, scaleX, scale)
+  if costumable then
+    self:drawCostumeOverlays(player, bodyFrame, drawX, drawY, scaleX, scale)
+  end
   if not player.isHurt then
-    self:drawFrame(player:getHeadFrame(), drawX, drawY, scaleX, scale)
+    self:drawFrame(headFrame, drawX, drawY, scaleX, scale)
+    if costumable then
+      self:drawCostumeOverlays(player, headFrame, drawX, drawY, scaleX, scale)
+    end
   end
 
   love.graphics.setColor(1, 1, 1, 1)
@@ -1644,22 +1686,23 @@ function Renderer:drawFireFoam(player, camera, beam)
 end
 
 function Renderer:drawSweatProjectile(projectile, camera)
+  local image = projectile.fire and self.fireSweatImage or self.sweatImage
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(
-    self.sweatImage,
-    math.floor(projectile.x - camera.x),
-    math.floor(projectile.y - camera.y),
+    image,
+    snap(projectile.x - camera.x),
+    snap(projectile.y - camera.y),
     projectile.angle,
     2,
     2,
-    self.sweatImage:getWidth() / 2,
-    self.sweatImage:getHeight() / 2
+    image:getWidth() / 2,
+    image:getHeight() / 2
   )
 end
 
 function Renderer:drawSweatSplash(splash, camera)
   local progress = math.max(0, 1 - splash.elapsed / 0.13)
-  local scale = 2 + progress
+  local scale = snapScale(2 + progress)
   love.graphics.setColor(1, 1, 1, progress)
   love.graphics.draw(
     self.sweatSplashImage,
@@ -1674,13 +1717,24 @@ function Renderer:drawSweatSplash(splash, camera)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
-function Renderer:drawFrame(frameName, x, y, scaleX, scaleY)
+-- Draws every active costume sheet with the SAME frame (and therefore the same
+-- animation frame and facing) as the base sprite, on top of it.
+function Renderer:drawCostumeOverlays(player, frameName, x, y, scaleX, scaleY)
+  for _, costume in ipairs(COSTUMES) do
+    local image = self.costumeImages[costume.evolution]
+    if image and player:hasEvolution(costume.evolution) then
+      self:drawFrame(frameName, x, y, scaleX, scaleY, image)
+    end
+  end
+end
+
+function Renderer:drawFrame(frameName, x, y, scaleX, scaleY, image)
   local frame = self.atlas.frames[frameName]
   if not frame then
     return
   end
 
-  love.graphics.draw(self.atlas.image, frame.quad, math.floor(x), math.floor(y), 0, scaleX, scaleY)
+  love.graphics.draw(image or self.atlas.image, frame.quad, snap(x), snap(y), 0, snapScale(scaleX), snapScale(scaleY))
 end
 
 return Renderer

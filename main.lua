@@ -138,6 +138,7 @@ local pickupNotification
 local pickupNotificationElapsed
 local pickupNotificationDuration = 3.4
 local matthewHurtSounds
+local extraSfx = { sweatIndex = 0 } -- deathSound, sweatSounds, deathPlayed
 local babyWidowSounds
 local bossDefeatSound
 local shopOffers
@@ -642,19 +643,78 @@ local function createBossDefeatTone()
   return registerSfxSource(love.audio.newSource(soundData, 'static'))
 end
 
--- Integer-scale fit: the canvas is drawn at a WHOLE-NUMBER scale (floor), so
--- every texel maps to an exact block of screen pixels (no shimmer, no uneven
--- pixels), and is centered with whole-pixel offsets. The room is never stretched
--- to fill the monitor; whatever is left over is the dark outer frame. Only when
--- the window is smaller than the canvas (scale would floor to 0) do we fall
--- back to a fractional fit so the whole room stays visible.
+-- Canvas -> window fit, in PHYSICAL PIXELS.
+--
+-- The 1344x756 canvas is drawn at a whole-number scale,
+--   floor(min(pixelWidth / 1344, pixelHeight / 756)),
+-- and centred with floored whole-pixel margins, so every texel maps to an exact
+-- block of screen pixels (1080p -> 1x, 1440p -> 1x, 4K -> 2x). Whatever is left
+-- over is the dark starfield. Only a window smaller than the canvas (floor would
+-- give 0) falls back to a fractional fit so the room stays visible.
+--
+-- Set View.FIT_ROOM_TO_HEIGHT = true to instead crop the empty 26 px bands and
+-- fit the room's wall frame to the window height during gameplay. That makes the
+-- walls touch the top and bottom, but the scale is then fractional on most
+-- monitors, so it trades away the strict pixel grid.
+View.FIT_ROOM_TO_HEIGHT = false
+View.ROOM_VIEW_STATES = {
+  playing = true, paused = true, boss_intro = true, item_selector = true,
+  cultist_choice = true, floor_transition = true,
+}
+
+function View.viewRect()
+  if View.FIT_ROOM_TO_HEIGHT and View.ROOM_VIEW_STATES[gameState] then
+    return View.ROOM_OFFSET_X, View.ROOM_OFFSET_Y, View.ROOM_WIDTH, View.ROOM_HEIGHT
+  end
+  return 0, 0, View.CANVAS_WIDTH, View.CANVAS_HEIGHT
+end
+
+-- Real drawable size in physical pixels (love.graphics.getDimensions would be
+-- logical points on a high-DPI display) and the points-to-pixels factor.
+function View.pixelSize()
+  return View.realGetPixelDimensions()
+end
+
+function View.dpiScale()
+  return love.window.getDPIScale and love.window.getDPIScale() or 1
+end
+
+-- Returns scale, offsetX, offsetY in physical pixels.
 function View.fit()
-  local width, height = View.realGetDimensions()
-  local raw = math.min(width / View.CANVAS_WIDTH, height / View.CANVAS_HEIGHT)
-  local scale = raw >= 1 and math.floor(raw) or raw
-  local offsetX = math.floor((width - View.CANVAS_WIDTH * scale) / 2)
-  local offsetY = math.floor((height - View.CANVAS_HEIGHT * scale) / 2)
+  local width, height = View.pixelSize()
+  local viewX, viewY, viewWidth, viewHeight = View.viewRect()
+  local fitted = math.min(width / viewWidth, height / viewHeight)
+  local scale = fitted
+  if not View.FIT_ROOM_TO_HEIGHT and fitted >= 1 then
+    scale = math.floor(fitted)
+  elseif View.FIT_ROOM_TO_HEIGHT then
+    scale = fitted
+  end
+  local offsetX = math.floor((width - viewWidth * scale) / 2 - viewX * scale)
+  local offsetY = math.floor((height - viewHeight * scale) / 2 - viewY * scale)
   return scale, offsetX, offsetY
+end
+
+-- Draws the starfield and the finished canvas straight onto the physical pixel
+-- grid: the transform undoes the DPI scale, so 1 drawing unit == 1 screen pixel.
+function View.present()
+  local raw = require('pixelgrid').raw
+  local pixelWidth, pixelHeight = View.pixelSize()
+  local scale, offsetX, offsetY = View.fit()
+  local dpi = View.dpiScale()
+
+  love.graphics.push()
+  love.graphics.origin()
+  if dpi ~= 1 then
+    raw.scale(1 / dpi, 1 / dpi)
+  end
+  View.drawOuterSpace(pixelWidth, pixelHeight)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.setBlendMode('alpha', 'premultiplied')
+  View.canvas:setFilter('nearest', 'nearest')
+  raw.draw(View.canvas, offsetX, offsetY, 0, scale, scale)
+  love.graphics.setBlendMode('alpha', 'alphamultiply')
+  love.graphics.pop()
 end
 
 -- Faint, fixed stars for the dark outer-space frame (positions are 0..1 of the
@@ -683,29 +743,70 @@ function View.drawOuterSpace(windowWidth, windowHeight)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Toggle desktop fullscreen (borderless, native resolution, any aspect ratio).
-function View.toggleFullscreen()
-  local isFullscreen = love.window.getFullscreen()
-  local success, message = love.window.setFullscreen(not isFullscreen, 'desktop')
+-- Borderless window covering the whole desktop (NOT exclusive fullscreen).
+function View.setBorderlessWindowed()
+  local desktopWidth, desktopHeight = love.window.getDesktopDimensions(1)
+  local success, message = love.window.setMode(desktopWidth, desktopHeight, {
+    fullscreen = false,
+    borderless = true,
+    resizable = false,
+    display = 1,
+    vsync = 1,
+    highdpi = true,
+  })
   if not success then
-    print('Unable to toggle fullscreen: ' .. tostring(message))
+    print('Unable to enter borderless window: ' .. tostring(message))
+    return
+  end
+  View.isBorderless = true
+end
+
+function View.setNormalWindow()
+  local width, height = View.initialWindowSize()
+  local success, message = love.window.setMode(width, height, {
+    fullscreen = false,
+    borderless = false,
+    resizable = true,
+    display = 1,
+    vsync = 1,
+    minwidth = 672,
+    minheight = 378,
+    highdpi = true,
+  })
+  if not success then
+    print('Unable to enter windowed mode: ' .. tostring(message))
+    return
+  end
+  View.isBorderless = false
+end
+
+-- F / F11: borderless desktop window <-> normal window.
+function View.toggleFullscreen()
+  if View.isBorderless then
+    View.setNormalWindow()
+  else
+    View.setBorderlessWindowed()
   end
 end
 
--- Window pixels -> canvas pixels.
+-- Window position (points, as LÖVE reports the mouse) -> canvas pixels.
 function View.toCanvas(x, y)
   local scale, offsetX, offsetY = View.fit()
-  return (x - offsetX) / scale, (y - offsetY) / scale
+  local dpi = View.dpiScale()
+  return (x * dpi - offsetX) / scale, (y * dpi - offsetY) / scale
 end
 
--- A window about as big as fits the desktop (whole-number scale when possible).
+-- A window about as big as fits the desktop at a WHOLE-number canvas scale,
+-- returned in window units (points).
 function View.initialWindowSize()
   local desktopWidth, desktopHeight = love.window.getDesktopDimensions()
-  local scale = math.min((desktopWidth - 80) / View.CANVAS_WIDTH, (desktopHeight - 120) / View.CANVAS_HEIGHT)
-  if scale >= 1 then
-    scale = math.floor(scale)
-  end
-  return math.floor(View.CANVAS_WIDTH * scale), math.floor(View.CANVAS_HEIGHT * scale)
+  local dpi = View.dpiScale()
+  local scale = math.min(
+    (desktopWidth * dpi - 80) / View.CANVAS_WIDTH,
+    (desktopHeight * dpi - 120) / View.CANVAS_HEIGHT
+  )
+  scale = scale >= 1 and math.floor(scale) or scale
+  return math.floor(View.CANVAS_WIDTH * scale / dpi), math.floor(View.CANVAS_HEIGHT * scale / dpi)
 end
 
 -- Game code only ever sees canvas coordinates: size and mouse queries are
@@ -713,6 +814,7 @@ end
 function View.install()
   local graphics, mouse = love.graphics, love.mouse
   View.realGetDimensions, View.realGetPosition = graphics.getDimensions, mouse.getPosition
+  View.realGetPixelDimensions = graphics.getPixelDimensions
   graphics.getWidth = function() return View.CANVAS_WIDTH end
   graphics.getHeight = function() return View.CANVAS_HEIGHT end
   graphics.getDimensions = function() return View.CANVAS_WIDTH, View.CANVAS_HEIGHT end
@@ -736,12 +838,19 @@ local function resetPlayer()
     currentFloorType = world.floorType,
     onShootSweat = function(directionX, directionY)
       if selectedCharacter and selectedCharacter.name == 'Matthew' then
-        sweatProjectiles[#sweatProjectiles + 1] = SweatProjectile.new(
-          player.x,
-          player.y,
-          directionX,
-          directionY
-        )
+        local sweat = SweatProjectile.new(player.x, player.y, directionX, directionY)
+        if sweat then
+          sweat.fire = player:hasEvolution('burnt_chilli') -- fire-themed art, see renderer.lua
+          sweatProjectiles[#sweatProjectiles + 1] = sweat
+        end
+        local pool = extraSfx.sweatSounds
+        if pool then
+          extraSfx.sweatIndex = extraSfx.sweatIndex % #pool + 1
+          local sweatSound = pool[extraSfx.sweatIndex]
+          sweatSound:stop()
+          sweatSound:setPitch(love.math.random(94, 106) / 100)
+          sweatSound:play()
+        end
       end
     end,
   })
@@ -885,6 +994,30 @@ local function initializeAudio()
     registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt3.wav', 'static')),
     registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt4.wav', 'static')),
   }
+  -- Optional sfx: a missing file just means no sound instead of a crash.
+  local function loadOptionalSfx(path)
+    if not love.filesystem.getInfo(path) then
+      print('Missing sound effect: ' .. path)
+      return nil
+    end
+    local ok, source = pcall(love.audio.newSource, path, 'static')
+    if not ok then
+      print('Could not load ' .. path .. ': ' .. tostring(source))
+      return nil
+    end
+    return registerSfxSource(source)
+  end
+  extraSfx.deathSound = loadOptionalSfx('resources/music/sfx/deathsound.wav')
+  local sweatSource = loadOptionalSfx('resources/music/sfx/sweatsfx.wav')
+  extraSfx.sweatSounds, extraSfx.sweatIndex = nil, 0
+  if sweatSource then
+    -- A few copies taken in turn so fast shots overlap instead of cutting off.
+    local pool = { sweatSource }
+    for index = 2, 4 do
+      pool[index] = registerSfxSource(sweatSource:clone())
+    end
+    extraSfx.sweatSounds = pool
+  end
   babyWidowSounds = {
     enter = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow enter stage.wav', 'static')),
     summon = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow summon.wav', 'static')),
@@ -984,11 +1117,15 @@ end
 
 function love.load()
   -- Pixel art stays razor sharp: this must run before ANY image/canvas/font is
-  -- created. The window itself (desktop fullscreen) is configured in conf.lua.
+  -- created. The window starts borderless (conf.lua) and is sized to the desktop
+  -- here, before any resource exists, since setMode can recreate the GL context.
   love.graphics.setDefaultFilter('nearest', 'nearest')
+  View.setBorderlessWindowed()
+  require('pixelgrid').install() -- whole-pixel positions + whole-number scales for all drawing
   View.install()
   View.makeStars()
-  View.canvas = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT)
+  -- dpiscale = 1: exactly 1344x756 pixels whatever the monitor's DPI scale.
+  View.canvas = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT, { dpiscale = 1 })
   View.canvas:setFilter('nearest', 'nearest')
   love.window.setTitle('Heat Dweller')
   loadTileAssets()
@@ -1503,7 +1640,7 @@ local function updateSweatCombat(dt, targets)
     targets,
     walls,
     world,
-    player.stats.damage
+    player:getDamage()
   )
   for _, target in ipairs(defeated) do
     if target == crawler or target == lilSnake or target == geometric or target == stuffing then
@@ -1538,6 +1675,19 @@ local function applyBossContactDamage()
 end
 
 function love.update(dt)
+  -- Every death path ends in gameState 'game_over'; play the death sound once
+  -- on the way in (re-armed when a new run starts).
+  if gameState == 'game_over' then
+    if not extraSfx.deathPlayed then
+      extraSfx.deathPlayed = true
+      if extraSfx.deathSound then
+        extraSfx.deathSound:stop()
+        extraSfx.deathSound:play()
+      end
+    end
+  else
+    extraSfx.deathPlayed = false
+  end
   updateMainMenuMusic(dt)
   if mainMenu and gameState ~= 'title' then
     if gameState ~= 'character_select' then
@@ -1757,6 +1907,7 @@ function love.update(dt)
   for _, enemy in ipairs(enemies) do
     if enemy and type(enemy.update) == 'function' and enemy.alive then
       local spawned = enemy:update(dt, player, world)
+      require('knockback').update(enemy, dt, world)
       if spawned and type(spawned) == 'table' then
         for _, child in ipairs(spawned) do
           if child and type(child.update) == 'function' then
@@ -1837,6 +1988,7 @@ function love.update(dt)
     return
   end
 
+  player:syncEvolutions(items:getInventoryItems())
   items:update(dt, player, function(definition)
     isPickingUpItem = true
     pickupTimer = 0.8
@@ -1974,7 +2126,7 @@ function activateHeldItem()
     snowmanArmedTimer = 8
     successful = true
   elseif definition.activeAction == 'cultist_oath' then
-    damageRoom(player.stats.damage, 0, 0)
+    damageRoom(player:getDamage(), 0, 0)
     player.stats.health = math.max(0, player.stats.health - 20)
     if player.stats.health <= 0 then
       gameState = 'game_over'
@@ -1996,7 +2148,7 @@ function activateHeldItem()
   elseif definition.activeAction == 'mallet' then
     local successChance = math.min(1, 0.25 + math.max(0, player.stats.luck) * 0.02)
     if math.random() < successChance then
-      damageRoom(player.stats.damage * 0.25, 0, 0)
+      damageRoom(player:getDamage() * 0.25, 0, 0)
     elseif player.stats.health <= 10 then
       player.stats.health = 0
       gameState = 'game_over'
@@ -2020,7 +2172,7 @@ function updateActiveEffects(dt)
     fire.timer = fire.timer - dt
     fire.tickTimer = fire.tickTimer - dt
     while fire.tickTimer <= 0 and fire.timer > 0 do
-      damageRoom(player.stats.damage * 0.25, fire.x, fire.y, fire.radius)
+      damageRoom(player:getDamage() * 0.25, fire.x, fire.y, fire.radius)
       fire.tickTimer = fire.tickTimer + 0.6
     end
     if fire.timer <= 0 then
@@ -2104,7 +2256,7 @@ local function captureGameplayPauseFrame()
   local width, height = love.graphics.getDimensions()
   if not mainMenu.pauseFrameCanvas or mainMenu.pauseFrameCanvas:getWidth() ~= width
       or mainMenu.pauseFrameCanvas:getHeight() ~= height then
-    mainMenu.pauseFrameCanvas = love.graphics.newCanvas(width, height)
+    mainMenu.pauseFrameCanvas = love.graphics.newCanvas(width, height, { dpiscale = 1 })
   end
 
   local previousCanvas = love.graphics.getCanvas()
@@ -2173,10 +2325,7 @@ function love.draw()
   love.graphics.setCanvas(View.canvas)
   View.drawFrame()
   love.graphics.setCanvas()
-  local scale, offsetX, offsetY = View.fit()
-  View.drawOuterSpace(View.realGetDimensions())
-  love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(View.canvas, offsetX, offsetY, 0, scale, scale)
+  View.present()
 end
 
 View.drawFrame = function()
@@ -3029,7 +3178,7 @@ function drawLadder()
   local x = ladder.x
   local y = ladder.y
   if ladderImage then
-    local imageScale = 1.7
+    local imageScale = 2
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(
       ladderImage,

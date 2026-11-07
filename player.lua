@@ -2,6 +2,18 @@
 local Player = {}
 Player.__index = Player
 
+-- Item-driven transformations. An evolution is active while the player owns the
+-- item (matched by items.xml id or name). Costume and projectile art live in
+-- renderer.lua, keyed by the same evolution name.
+Player.EVOLUTIONS = {
+  burnt_chilli = {
+    itemId = 1,
+    itemName = 'Burnt Chilli',
+    damageBonus = 1,       -- flat, added before the multiplier
+    damageMultiplier = 1.5, -- applied to the total
+  },
+}
+
 function Player.new(config)
   config = config or {}
 
@@ -22,9 +34,6 @@ function Player.new(config)
     moving = false,
     velocityX = 0,
     velocityY = 0,
-    recoilVelocityX = 0,
-    recoilVelocityY = 0,
-    recoilImpulse = config.recoilImpulse or 24,
     animationTime = 0,
     blinkTime = 0,
     nextBlink = config.blinkInterval or 2.5,
@@ -51,6 +60,7 @@ function Player.new(config)
       size = 1,
     },
     activeEffects = {},
+    evolutions = {},
     currentFloorType = config.currentFloorType or 'basement',
     onDamaged = config.onDamaged,
   }
@@ -83,6 +93,45 @@ function Player:applyItem(item)
       cooldown = item.cooldown or item.timedCooldown,
     })
   end
+end
+
+local function ownsEvolutionItem(inventory, evolution)
+  for _, item in ipairs(inventory or {}) do
+    local name = type(item.name) == 'string' and item.name:lower() or nil
+    if tonumber(item.id) == evolution.itemId or name == evolution.itemName:lower() then
+      return true
+    end
+  end
+  return false
+end
+
+-- Call every frame with items:getInventoryItems(); the inventory is the single
+-- source of truth, so picking an item up by any route (room, shop, deal)
+-- transforms Matthew and a new run (new Player) resets it.
+function Player:syncEvolutions(inventory)
+  for name, evolution in pairs(Player.EVOLUTIONS) do
+    self.evolutions[name] = ownsEvolutionItem(inventory, evolution)
+  end
+end
+
+function Player:hasEvolution(name)
+  return self.evolutions[name] == true
+end
+
+-- Final per-hit damage: (base + flat bonuses) * multipliers.
+function Player:getDamage()
+  local damage = self.stats.damage
+  for name, evolution in pairs(Player.EVOLUTIONS) do
+    if self.evolutions[name] then
+      damage = damage + (evolution.damageBonus or 0)
+    end
+  end
+  for name, evolution in pairs(Player.EVOLUTIONS) do
+    if self.evolutions[name] then
+      damage = damage * (evolution.damageMultiplier or 1)
+    end
+  end
+  return damage
 end
 
 function Player:takeDamage(amount, damageClass, floorType)
@@ -219,14 +268,8 @@ function Player:update(dt, input, world)
 
   -- Smoothly slide (interpolate) velocity toward target velocity for the drift effect
   local accel = self.acceleration or 12
-  local baseVelocityX = self.velocityX - self.recoilVelocityX
-  local baseVelocityY = self.velocityY - self.recoilVelocityY
-  
-  baseVelocityX = baseVelocityX + (targetVx - baseVelocityX) * math.min(1, accel * dt)
-  baseVelocityY = baseVelocityY + (targetVy - baseVelocityY) * math.min(1, accel * dt)
-
-  self.velocityX = baseVelocityX + self.recoilVelocityX
-  self.velocityY = baseVelocityY + self.recoilVelocityY
+  self.velocityX = self.velocityX + (targetVx - self.velocityX) * math.min(1, accel * dt)
+  self.velocityY = self.velocityY + (targetVy - self.velocityY) * math.min(1, accel * dt)
 
   local nextX = self.x + self.velocityX * dt
   local nextY = self.y + self.velocityY * dt
@@ -249,9 +292,6 @@ function Player:update(dt, input, world)
   end
   self.x = nextX
   self.y = nextY
-  local recoilDamping = math.exp(-10 * dt)
-  self.recoilVelocityX = self.recoilVelocityX * recoilDamping
-  self.recoilVelocityY = self.recoilVelocityY * recoilDamping
 
   if self.moving then
     local movementFacing
@@ -339,8 +379,6 @@ function Player:shootSweat(directionX, directionY)
 
   self.sweatShotCooldown = self:getShotCooldown()
   self.onShootSweat(directionX, directionY)
-  self.recoilVelocityX = self.recoilVelocityX - directionX * self.recoilImpulse
-  self.recoilVelocityY = self.recoilVelocityY - directionY * self.recoilImpulse
   return true
 end
 
