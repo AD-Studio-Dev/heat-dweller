@@ -9,6 +9,12 @@ local Enemy = require('enemy')
 local Scar = require('scar')
 local Spider = require('spider')
 local Fly = require('fly')
+local AggressiveFly = require('aggressive_fly')
+local Breathless = require('breathless')
+local Panicker = require('panicker')
+local Puffer = require('puffer')
+local Aimless = require('aimless')
+local Linked = require('linked')
 local Centipede = require('centipede')
 local StationaryAngel = require('stationary_angel')
 local Crawler = require('crawler')
@@ -1099,6 +1105,10 @@ local function initializeMenu()
   end
   Atlas:load()
   Fly.load()
+  AggressiveFly.load()
+  Breathless.load()
+  Aimless.load()
+  Linked.load()
   ladderImage = love.graphics.newImage('resources/gfx/ui/stage/climbingladder.png')
   ladderImage:setFilter('nearest', 'nearest')
   renderer = Renderer.new(Atlas)
@@ -1335,6 +1345,9 @@ saveRun = function()
     'stateTimer', 'dashDirectionX', 'dashDirectionY',
     'driftAngle', 'driftTargetX', 'driftTargetY', 'driftTimer',
     'velocityX', 'velocityY',
+    -- Breathless / Panicker / Puffer
+    'vx', 'vy', 'headTime', 'spawnTimer', 'pauseTimer', 'wanderTimer',
+    'decapitated', 'head', 'tears', 'dirX', 'dirY', 'turnTimer',
     -- Stationary Angel (Sky floor only)
     'maxHealth', 'lastHealth', 'roomTimer', 'attackState', 'attackTimer',
     'beamX', 'beamIndex', 'telegraphDuration', 'hitStack', 'hitStackTimer',
@@ -2275,7 +2288,7 @@ local function captureGameplayPauseFrame()
   drawActiveEffects(world.camera)
   drawSpecialRoomContents()
   for _, enemy in ipairs(enemies) do
-    if enemy.kind == 'fly' then
+    if enemy.kind == 'fly' or enemy.selfDrawn then
       enemy:draw(world.camera)
     else
       renderer:drawEnemy(enemy, world.camera)
@@ -2471,7 +2484,7 @@ View.drawFrame = function()
   drawActiveEffects(world.camera)
   drawSpecialRoomContents()
   for _, enemy in ipairs(enemies) do
-    if enemy.kind == 'fly' then
+    if enemy.kind == 'fly' or enemy.selfDrawn then
       enemy:draw(world.camera)
     else
       renderer:drawEnemy(enemy, world.camera)
@@ -3374,6 +3387,8 @@ function spawnRoomEnemies(room)
       enemy = Scar.new(definition)
     elseif definition.type == 'spider' then
       enemy = Spider.new(definition)
+    elseif definition.type == 'aggressivefly' then
+      enemy = AggressiveFly:new(definition.x, definition.y)
     elseif definition.type == 'fly' then
       enemy = Fly:new(definition.x, definition.y)
     elseif definition.type == 'centipede' then
@@ -3396,6 +3411,16 @@ function spawnRoomEnemies(room)
       attachGeometricFeedback(geometric)
     elseif definition.type == 'stuffing' then
       stuffing = TheStuffing.new(world)
+    elseif definition.type == 'breathless' then
+      enemy = Breathless.new(definition)
+    elseif definition.type == 'panicker' then
+      enemy = Panicker.new(definition)
+    elseif definition.type == 'puffer' then
+      enemy = Puffer.new(definition)
+    elseif definition.type == 'aimless' then
+      enemy = Aimless.new(definition)
+    elseif definition.type == 'linked' then
+      enemy = Linked.new(definition)
     else
       enemy = Enemy.new(definition)
     end

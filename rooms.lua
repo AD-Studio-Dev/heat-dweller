@@ -263,12 +263,12 @@ end
 
 local function makeEnemies(random, floorType, layout)
   local enemyTypesByFloor = {
-    basement = { 'scar', 'spider', 'fly', 'centipede' },
-    living_room = { 'scar', 'spider', 'centipede' },
-    kitchen = { 'scar', 'fly', 'centipede' },
-    bedroom = { 'scar', 'spider', 'centipede' },
-    attic = { 'spider', 'fly', 'centipede' },
-    roof = { 'scar', 'fly', 'centipede' },
+    basement = { 'scar', 'spider', 'fly', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
+    living_room = { 'scar', 'spider', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
+    kitchen = { 'scar', 'fly', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
+    bedroom = { 'scar', 'spider', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
+    attic = { 'spider', 'fly', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
+    roof = { 'scar', 'fly', 'centipede', 'breathless', 'panicker', 'puffer', 'aimless', 'linked' },
     sky = { 'stationaryangel' }, -- The Sky's only enemy; never listed on any other floor.
   }
   local enemyTypes = enemyTypesByFloor[floorType] or enemyTypesByFloor.basement
