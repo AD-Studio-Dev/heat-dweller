@@ -217,6 +217,8 @@ View.ROOM_OFFSET_Y = (View.CANVAS_HEIGHT - View.ROOM_HEIGHT) / 2
 -- Door transitions: eased camera slide, then a 0.4 s frozen grace period.
 -- See roomtransition.lua. The scene canvases are created in love.load().
 View.transition = require('roomtransition').new()
+-- The Remote's state lives on View (not a new top-level local) to stay clear of Lua's 200-local limit.
+View.remote = require('remote').new()
 
 -- x, y, width, height of a door, always centered on its wall.
 function View.doorRect(direction)
@@ -737,12 +739,43 @@ function View.present()
   if dpi ~= 1 then
     raw.scale(1 / dpi, 1 / dpi)
   end
-  View.drawOuterSpace(pixelWidth, pixelHeight)
+  if gameState == 'run_start' then
+    love.graphics.clear(0, 0, 0, 1) -- solid black, no starfield either
+  else
+    View.drawOuterSpace(pixelWidth, pixelHeight)
+  end
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.setBlendMode('alpha', 'premultiplied')
   View.canvas:setFilter('nearest', 'nearest')
   raw.draw(View.canvas, offsetX, offsetY, 0, scale, scale)
   love.graphics.setBlendMode('alpha', 'alphamultiply')
+  -- Run-start fade: a black cover over the whole window (canvas and outer space).
+  local coverAlpha = View.runFadeAlpha()
+  if coverAlpha > 0 then
+    love.graphics.setColor(0, 0, 0, coverAlpha)
+    love.graphics.rectangle('fill', 0, 0, pixelWidth, pixelHeight)
+
+    -- The splash sits on top of the black cover, centred on the canvas, and fades out
+    -- with it (same alpha), so both dissolve together into the room and the music.
+    -- Drawn here, not in the canvas, so the cover can't hide it during the fade-out.
+    local image = View.runStartImage
+    if image then
+      local imageWidth, imageHeight = image:getDimensions()
+      -- Native size, shrunk by a whole-number divisor only if it would not fit.
+      local imageScale = require('pixelgrid').snapScale(math.min(
+        1, View.CANVAS_WIDTH / imageWidth, View.CANVAS_HEIGHT / imageHeight
+      ))
+      local centerX = math.floor(offsetX + View.CANVAS_WIDTH * scale / 2)
+      local centerY = math.floor(offsetY + View.CANVAS_HEIGHT * scale / 2)
+      love.graphics.setColor(1, 1, 1, coverAlpha)
+      raw.draw(
+        image, centerX, centerY, 0,
+        imageScale * scale, imageScale * scale,
+        math.floor(imageWidth / 2), math.floor(imageHeight / 2)
+      )
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+  end
   love.graphics.pop()
 end
 
@@ -911,6 +944,8 @@ local function resetPlayerRunState()
   sweatProjectiles = {}
   sweatSplashes = {}
   initializeItems()
+  View.remote:reset()
+  View.runStart = nil
   fireFoam = FireFoam.new()
   rooms = {}
   roomIndex = 1
@@ -1037,6 +1072,7 @@ local function initializeAudio()
     return registerSfxSource(source)
   end
   extraSfx.deathSound = loadOptionalSfx('resources/music/sfx/deathsound.wav')
+  extraSfx.startRun = loadOptionalSfx('resources/music/sfx/startrun.wav')
   local sweatSource = loadOptionalSfx('resources/music/sfx/sweatsfx.wav')
   extraSfx.sweatSounds, extraSfx.sweatIndex = nil, 0
   if sweatSource then
@@ -1181,6 +1217,15 @@ function love.load()
   View.sceneNew:setFilter('nearest', 'nearest')
   love.window.setTitle('Heat Dweller')
   loadTileAssets()
+  -- Splash shown over the black screen while startrun.wav plays (optional art).
+  local runStartImagePath = 'resources/gfx/ui/stage/runstartimage.png'
+  View.runStartImage = nil
+  if love.filesystem.getInfo(runStartImagePath) then
+    View.runStartImage = love.graphics.newImage(runStartImagePath)
+    View.runStartImage:setFilter('nearest', 'nearest')
+  else
+    print('Missing run start image: ' .. runStartImagePath)
+  end
   initializeProfileAndItems()
 
   world = {
@@ -1393,6 +1438,8 @@ saveRun = function()
     -- Stationary Angel (Sky floor only)
     'maxHealth', 'lastHealth', 'roomTimer', 'attackState', 'attackTimer',
     'beamX', 'beamIndex', 'telegraphDuration', 'hitStack', 'hitStackTimer',
+    -- Remote zap (frozen enemy)
+    'zapTimer',
   }
   local savedEnemies = {}
   for index, enemy in ipairs(enemies) do
@@ -1448,6 +1495,7 @@ saveRun = function()
     cultistOffer = saveOffer(cultistOffer),
     inputBindings = copySaveData(input.bindings),
     characterIndex = characterIndex,
+    remoteHits = View.remote.hits,
   }
   for _, projectile in ipairs(acidProjectiles) do
     snapshot.acidProjectiles[#snapshot.acidProjectiles + 1] = saveEntity(projectile, {
@@ -1532,6 +1580,10 @@ continueRun = function()
   autosaveTimer = 0
 
   initializeItems()
+  View.remote:reset()
+  View.remote.hits = math.max(0, tonumber(snapshot.remoteHits) or 0)
+  View.remote:refreshEmpowered()
+  View.runStart = nil
   resetPlayer()
   for stat, value in pairs(snapshot.player.stats or {}) do
     player.stats[stat] = value
@@ -1781,6 +1833,272 @@ local function applyBossContactDamage()
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- The Remote (held melee weapon, item id 29). Rules live in remote.lua.
+-- ---------------------------------------------------------------------------
+
+-- True while Matthew owns the Remote (it then replaces his sweat shots).
+function View.hasRemote()
+  return items ~= nil and (items.inventory[View.remote.ITEM_ID] or 0) > 0
+end
+
+-- True if the Remote is owned or already lying on the floor (only one per run).
+function View.remoteExists()
+  if View.hasRemote() then
+    return true
+  end
+  for _, item in ipairs(items.active) do
+    if item.definition.id == View.remote.ITEM_ID then
+      return true
+    end
+  end
+  return false
+end
+
+-- Same kill rewards as sweat shots and fire foam.
+function View.awardDefeat(target)
+  if target == crawler or target == lilSnake or target == geometric or target == stuffing then
+    player.stats.dollars = player.stats.dollars + 8
+  elseif target == babyWidow then
+    player.stats.dollars = player.stats.dollars + 3
+  elseif not target.geometricPart then
+    player.stats.dollars = player.stats.dollars + 1
+  end
+end
+
+View.remoteDirections = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 }, right = { 1, 0 } }
+
+-- Starts a Remote swing. This bypasses Player:shootSweat on purpose: that function
+-- enforces the sweat fire-rate cooldown, and the Remote has none. Accepts numbers or
+-- a direction name. Facing is updated here, the same way shootSweat does it.
+function View.remoteSwing(directionX, directionY)
+  if gameState ~= 'playing' or isPickingUpItem or player.stats.health <= 0 then
+    return false
+  end
+  if type(directionX) == 'string' then
+    local named = View.remoteDirections[directionX]
+    if not named then
+      return false
+    end
+    directionX, directionY = named[1], named[2]
+  end
+  if type(directionX) ~= 'number' or type(directionY) ~= 'number'
+      or (directionX == 0 and directionY == 0) then
+    return false
+  end
+
+  if math.abs(directionX) > math.abs(directionY) then
+    player.facing = directionX < 0 and 'left' or 'right'
+  else
+    player.facing = directionY < 0 and 'up' or 'down'
+  end
+  return View.remote:swing(player, directionX, directionY)
+end
+
+-- Keyboard attack keys: one swing per key press (or per change of direction while
+-- another is held). Holding a key does not auto-repeat; mouse clicks are handled in
+-- love.mousepressed.
+function View.pollRemoteAttack()
+  local direction = input:getHeldAttackDirection()
+  if direction and direction ~= View.remoteLastAttack then
+    View.remoteSwing(direction)
+  end
+  View.remoteLastAttack = direction
+end
+
+-- The Living Room couch in the current room, if any.
+function View.findCouch()
+  if not currentRoom or world.floorType ~= 'living_room' then
+    return nil
+  end
+  for _, obstacle in ipairs(currentRoom.layout.obstacles or {}) do
+    if obstacle.style == 'couch' then
+      return obstacle
+    end
+  end
+  return nil
+end
+
+function View.nearCouch(couch)
+  local closestX = math.max(couch.x, math.min(player.x, couch.x + couch.width))
+  local closestY = math.max(couch.y, math.min(player.y, couch.y + couch.height))
+  local dx, dy = player.x - closestX, player.y - closestY
+  local range = View.remote.SEARCH_DISTANCE
+  return dx * dx + dy * dy <= range * range
+end
+
+-- Interact (E / Enter) next to an unsearched couch in a cleared room. Each couch can
+-- be searched once; it holds the Remote 50% of the time (never a second copy).
+-- The `searched` flag lives on the layout, so it is saved with the run.
+function View.trySearchCouch()
+  if doorsLocked then
+    return false
+  end
+  local couch = View.findCouch()
+  if not couch or couch.searched or not View.nearCouch(couch) then
+    return false
+  end
+
+  couch.searched = true
+  local found = false
+  local definition = items.definitions[View.remote.ITEM_ID]
+  if definition and definition.image and not View.remoteExists()
+      and math.random() < View.remote.COUCH_CHANCE then
+    -- Drops just in front of the couch.
+    found = items:spawn(View.remote.ITEM_ID, couch.x + couch.width / 2, couch.y + couch.height + 48)
+  end
+  items.statNotifications[#items.statNotifications + 1] = {
+    x = couch.x + couch.width / 2,
+    y = couch.y - 8,
+    text = found and 'Found a Remote!' or 'Nothing in here...',
+    positive = found,
+    timer = 1.1,
+    delay = 0,
+  }
+  return true
+end
+
+function View.drawCouchPrompt()
+  if doorsLocked then
+    return
+  end
+  local couch = View.findCouch()
+  if not couch or couch.searched or not View.nearCouch(couch) then
+    return
+  end
+  love.graphics.setFont(renderer.smallFont)
+  love.graphics.setColor(0.98, 0.88, 0.45, 1)
+  love.graphics.printf(
+    'E: SEARCH COUCH',
+    math.floor(couch.x + couch.width / 2 - 100 - world.camera.x),
+    math.floor(couch.y - 22 - world.camera.y),
+    200,
+    'center'
+  )
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Zap crackle over frozen enemies, then the held Remote on top of Matthew.
+function View.drawRemoteLayer(camera)
+  View.remote.drawZaps(enemies, camera)
+  if View.hasRemote() then
+    local definition = items.definitions[View.remote.ITEM_ID]
+    if definition and definition.image then
+      renderer:drawRemote(player, camera, View.remote, definition.image)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Run-start transition (character select -> first room)
+--
+--   1. 'run_start' game state, "black" phase: everything is frozen and the screen
+--      is solid black while resources/music/sfx/startrun.wav plays. No gameplay,
+--      entity updates or room drawing, and all floor music is silent.
+--   2. When the sound ends, the state becomes 'playing' and the "fade" phase runs
+--      for RUN_FADE_DURATION seconds: the black overlay fades out over the room
+--      while the floor music fades in.
+-- View.runStart holds { phase, elapsed, duration, bgMusic } and is nil otherwise.
+-- ---------------------------------------------------------------------------
+View.RUN_FADE_DURATION = 0.75 -- same length as the basement / kitchen / sky music fade-ins
+
+-- Called at the end of startGame(), once the run is built and the first room entered.
+function View.beginRunStart()
+  -- startGame()/enterRoom() already started the floor music; silence it all. It is
+  -- started again, fading in, when the sound finishes.
+  stopBasementMusic(false)
+  stopKitchenMusic(false)
+  stopSkyMusic(false)
+  if backgroundMusic then
+    backgroundMusic:stop()
+    backgroundMusic:setVolume(0)
+  end
+
+  local sound = extraSfx.startRun
+  local duration = 0
+  if sound then
+    sound:stop()
+    sound:play()
+    duration = sound:getDuration()
+  end
+  View.runStart = { phase = 'black', elapsed = 0, duration = duration }
+  gameState = 'run_start'
+end
+
+-- Starts the first room's music at volume 0 so it can fade in with the picture.
+function View.startRunMusic()
+  local floorType = world.floorType
+  if floorType == 'kitchen' then
+    startKitchenMusic() -- these three fade 0 -> 1 over 0.75 s by themselves
+  elseif floorType == 'basement' then
+    startBasementMusic()
+  elseif floorType == 'sky' then
+    startSkyMusic()
+  else
+    View.runStart.bgMusic = true -- the shared track is ramped in View.updateRunStart
+    backgroundMusic:stop()
+    backgroundMusic:setVolume(0)
+    backgroundMusic:play()
+  end
+end
+
+-- 0 while black, easing up to 1 as the fade-in completes (smoothstep).
+function View.runFadeProgress()
+  local run = View.runStart
+  if not run then
+    return 1
+  end
+  if run.phase ~= 'fade' then
+    return 0
+  end
+  local progress = math.min(1, run.elapsed / View.RUN_FADE_DURATION)
+  return progress * progress * (3 - 2 * progress)
+end
+
+-- Opacity of the black cover drawn over the whole window (View.present).
+function View.runFadeAlpha()
+  if gameState == 'run_start' then
+    return 1
+  end
+  return 1 - View.runFadeProgress()
+end
+
+-- Runs every frame from love.update, before any state is skipped.
+function View.updateRunStart(dt)
+  local run = View.runStart
+  if not run then
+    return
+  end
+  run.elapsed = run.elapsed + dt
+
+  if run.phase == 'black' then
+    local sound = extraSfx.startRun
+    -- Done when the sound stopped playing (after a short start-up grace), or, as a
+    -- failsafe, shortly after its known length. Also done at once if it never loaded.
+    local finished = not sound
+      or (run.elapsed >= 0.1 and not sound:isPlaying())
+      or run.elapsed >= run.duration + 0.25
+    if finished then
+      run.phase = 'fade'
+      run.elapsed = 0
+      gameState = 'playing' -- gameplay resumes as the picture fades in
+      View.startRunMusic()
+    end
+    return
+  end
+
+  if run.bgMusic then
+    local intensity = math.min(1, 0.75 + math.max(0, (world.floorIndex or 1) - 1) * 0.04)
+    backgroundMusic:setVolume(audioMusicVolume * intensity * View.runFadeProgress())
+  end
+  if run.elapsed >= View.RUN_FADE_DURATION then
+    View.runStart = nil
+    if run.bgMusic then
+      setFloorMusicVolume()
+    end
+  end
+end
+
 function love.update(dt)
   -- Every death path ends in gameState 'game_over'; play the death sound once
   -- on the way in (re-armed when a new run starts).
@@ -1800,6 +2118,10 @@ function love.update(dt)
     if gameState ~= 'character_select' then
       mainMenu:updateTransition(dt)
     end
+  end
+  View.updateRunStart(dt)
+  if gameState == 'run_start' then
+    return -- black screen while startrun.wav plays: no gameplay, entities or timers
   end
   if gameState == 'opening_cutscene' then
     if openingCutscene then
@@ -1927,7 +2249,11 @@ function love.update(dt)
     end
   end
   player:update(dt, input, world)
-  if love.mouse.isDown(1) then
+  if View.hasRemote() then
+    -- Remote: no cooldown, one swing per click / key press (see View.pollRemoteAttack
+    -- and love.mousepressed), so the held-fire path below is skipped.
+    View.pollRemoteAttack()
+  elseif love.mouse.isDown(1) then
     local mouseX, mouseY = love.mouse.getPosition()
     local screenWidth, screenHeight = love.graphics.getDimensions()
     local letterboxX = View.ROOM_OFFSET_X
@@ -1941,7 +2267,7 @@ function love.update(dt)
       player:shootSweat(attackDirection)
     end
   end
-  player.foamEquipped = (items.inventory[23] or 0) > 0
+  player.foamEquipped = (items.inventory[23] or 0) > 0 and not View.hasRemote()
   local foamTargets = {}
   if crawler then
     foamTargets[#foamTargets + 1] = crawler
@@ -2022,7 +2348,10 @@ function love.update(dt)
     end
   end
   for _, enemy in ipairs(enemies) do
-    if enemy and type(enemy.update) == 'function' and enemy.alive then
+    if enemy and (enemy.zapTimer or 0) > 0 and enemy.alive then
+      -- Zapped by the Remote: frozen in place (no AI, no attacks, no knockback drift).
+      enemy.zapTimer = math.max(0, enemy.zapTimer - dt)
+    elseif enemy and type(enemy.update) == 'function' and enemy.alive then
       local spawned = enemy:update(dt, player, world)
       require('knockback').update(enemy, dt, world)
       View.pushOutOfSolids(enemy, world.solidObstacles)
@@ -2043,6 +2372,15 @@ function love.update(dt)
     end
   end
   updateSweatCombat(dt, foamTargets)
+
+  -- Remote swings: hit tracking, empowering at 30 hits, and the zap roll.
+  local zappable = {}
+  for _, enemy in ipairs(enemies) do
+    zappable[enemy] = true -- regular enemies only; bosses are never frozen
+  end
+  for _, target in ipairs(View.remote:update(dt, player, foamTargets, zappable, player:getDamage())) do
+    View.awardDefeat(target)
+  end
 
   local activeBoss = crawler or lilSnake or geometric or stuffing
   if currentRoom and currentRoom.boss then
@@ -2413,6 +2751,7 @@ local function captureGameplayPauseFrame()
     lilSnake:draw(world.camera)
   end
   renderer:drawPlayer(player, world.camera)
+  View.drawRemoteLayer(world.camera)
   renderer:drawFireFoam(player, world.camera, fireFoam.beam)
   items:drawStatNotifications(world.camera)
   world.camera.x, world.camera.y = cameraX, cameraY
@@ -2477,6 +2816,7 @@ function drawGameplayScene(shakeX, shakeY)
     lilSnake:draw(world.camera)
   end
   renderer:drawPlayer(player, world.camera)
+  View.drawRemoteLayer(world.camera)
   renderer:drawFireFoam(player, world.camera, fireFoam.beam)
   items:drawStatNotifications(world.camera)
   world.camera.x, world.camera.y = cameraX, cameraY
@@ -2514,6 +2854,12 @@ end
 
 View.drawFrame = function()
   love.graphics.clear(0.055, 0.07, 0.08)
+
+  -- Run-start black phase: nothing is drawn, not even the room.
+  if gameState == 'run_start' then
+    love.graphics.clear(0, 0, 0, 1)
+    return
+  end
 
   if gameState == 'opening_cutscene' and openingCutscene then
     local screenWidth, screenHeight = love.graphics.getDimensions()
@@ -2903,7 +3249,7 @@ function love.keypressed(key)
   end
 
   if key == input.bindings.interact or key == 'return' then
-    if tryShopPurchase() or tryCultistOffer() then
+    if tryShopPurchase() or tryCultistOffer() or View.trySearchCouch() then
       return
     end
   end
@@ -2993,8 +3339,6 @@ function love.gamepadpressed(_, button)
       menuSwitchSound:stop()
       menuSwitchSound:play()
     elseif button == 'a' or button == 'start' then
-      menuSelectSound:stop()
-      menuSelectSound:play()
       startGame()
     end
   end
@@ -3637,6 +3981,7 @@ end
 function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   sweatProjectiles = {}
   sweatSplashes = {}
+  View.remote:clearSwings()
   roomIndex = index
   currentRoom = rooms[roomIndex]
   currentRoom.explored = true
@@ -3827,6 +4172,14 @@ function love.mousepressed(x, y, button)
     return
   end
 
+  -- Remote: every click swings immediately toward the cursor (no cooldown).
+  if gameState == 'playing' and View.hasRemote() then
+    local targetX = x + world.camera.x - View.ROOM_OFFSET_X
+    local targetY = y + world.camera.y - View.ROOM_OFFSET_Y
+    View.remoteSwing(targetX - player.x, targetY - (player.y - 22))
+    return
+  end
+
   if gameState == 'title' then
     local action = mainMenu:mousepressed(x, y)
     if action == 'new_game' then
@@ -3880,6 +4233,7 @@ function startGame(debugBossType)
     print(clearError)
     return false
   end
+
   resetPlayerRunState()
   local debugBoss
   if debugBossType then
@@ -3935,6 +4289,11 @@ function startGame(debugBossType)
   profile.runsStarted = profile.runsStarted + 1
   saveProfile()
   refreshMenuExtras()
+  -- The run is fully built; now hand over with the black-screen + startrun.wav
+  -- sequence (debug boss teleports skip it).
+  if not debugBossType then
+    View.beginRunStart()
+  end
   return true
 end
 
@@ -4604,6 +4963,8 @@ function drawSpecialRoomContents()
   elseif currentRoom and currentRoom.cultistDeal then
     drawOffer(cultistOffer)
   end
+
+  View.drawCouchPrompt()
 end
 
 function drawCultistChoiceOverlay()

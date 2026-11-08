@@ -371,4 +371,17 @@
     bob_height="3"
     effect="10% chance to reflect block damage from an attack. Chance to block scales with luck."
 />
+
+<item 
+    id="29"
+    name="Remote"
+    description="Whack n' Zap"
+    type="Passive"
+    quality="3"
+    itempool="event,"
+    image="resources/gfx/items/collectibles/collectibles_029_remote.png"
+    bob_speed="2.2"
+    bob_height="3"
+    effect="Replaces Matthew's sweat projectiles with a remote."
+/>
 </items>

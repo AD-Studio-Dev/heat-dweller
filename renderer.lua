@@ -85,6 +85,19 @@ local COSTUMES = {
 }
 local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweatattack_fire.png'
 
+-- The Remote held in Matthew's hand (see remote.lua). The collectible sprite is
+-- drawn as-is, gripped at its bottom-centre, with its top pointing along the swing.
+-- REMOTE_SPRITE_ANGLE rotates it if the art's "tip" isn't at the top of the image.
+local REMOTE_HELD_SCALE = 2
+local REMOTE_SPRITE_ANGLE = 0
+local REMOTE_SWING_SWEEP = math.rad(65) -- the blade sweeps +/- this around the aim
+local REMOTE_REST = { -- hand offset from Matthew's centre and resting tilt, per facing
+  right = { x = 22, y = 8, angle = 0.5 },
+  left = { x = -22, y = 8, angle = -0.5 },
+  down = { x = 20, y = 14, angle = 0.3 },
+  up = { x = -20, y = 6, angle = -0.3 },
+}
+
 function Renderer.new(atlas)
   LilSnake.load()
   local renderer = setmetatable({ atlas = atlas }, Renderer)
@@ -1641,6 +1654,68 @@ function Renderer:drawPlayer(player, camera)
     end
   end
 
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Draws the held Remote with the exact collectible sprite. Resting in the hand
+-- between swings, sweeping an arc while a swing is active. Once empowered (30 hits)
+-- it gets a slightly yellow tint plus a pulsing additive glow.
+function Renderer:drawRemote(player, camera, remote, image)
+  if not image then
+    return
+  end
+
+  local time = love.timer.getTime()
+  local playerX = player.x - camera.x
+  local playerY = player.y - camera.y
+  local swing = remote:getActiveSwing()
+  local angle, handX, handY
+
+  if swing then
+    local progress = math.min(1, swing.elapsed / swing.duration)
+    local eased = 1 - (1 - progress) * (1 - progress)
+    local aim = math.atan2(swing.dirY, swing.dirX)
+    angle = aim + math.pi / 2 + (-1 + 2 * eased) * REMOTE_SWING_SWEEP
+    handX = playerX + swing.dirX * 16
+    handY = playerY + 6 + swing.dirY * 12
+
+    -- Faint slash arc that follows the blade.
+    love.graphics.setLineWidth(3)
+    if remote.empowered then
+      love.graphics.setColor(1, 0.92, 0.4, 0.5 * (1 - progress))
+    else
+      love.graphics.setColor(1, 1, 1, 0.4 * (1 - progress))
+    end
+    love.graphics.arc(
+      'line', 'open', playerX, playerY - 8, remote.REACH * 0.8,
+      aim - remote.ARC_HALF, aim - remote.ARC_HALF + 2 * remote.ARC_HALF * eased
+    )
+    love.graphics.setLineWidth(1)
+  else
+    local rest = REMOTE_REST[player.facing] or REMOTE_REST.down
+    angle = rest.angle
+    handX = playerX + rest.x
+    handY = playerY + rest.y
+  end
+
+  angle = angle + REMOTE_SPRITE_ANGLE
+  local originX, originY = image:getWidth() / 2, image:getHeight()
+  local drawX, drawY = snap(handX), snap(handY)
+
+  if remote.empowered then
+    love.graphics.setColor(1, 0.93, 0.5, 1) -- slightly yellow tint
+  else
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+  love.graphics.draw(image, drawX, drawY, angle, REMOTE_HELD_SCALE, REMOTE_HELD_SCALE, originX, originY)
+
+  if remote.empowered then
+    local pulse = 0.5 + 0.5 * math.sin(time * 6)
+    love.graphics.setBlendMode('add')
+    love.graphics.setColor(1, 0.9, 0.3, 0.18 + 0.14 * pulse)
+    love.graphics.draw(image, drawX, drawY, angle, REMOTE_HELD_SCALE, REMOTE_HELD_SCALE, originX, originY)
+    love.graphics.setBlendMode('alpha')
+  end
   love.graphics.setColor(1, 1, 1, 1)
 end
 
