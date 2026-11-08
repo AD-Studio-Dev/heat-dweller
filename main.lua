@@ -840,6 +840,11 @@ function View.setNormalWindow()
     return
   end
   View.isBorderless = false
+  -- Fill the screen but keep the frame, title bar and window buttons. (Needs a
+  -- resizable window, which the flags above guarantee.)
+  if love.window.maximize then
+    love.window.maximize()
+  end
 end
 
 -- F / F11: borderless desktop window <-> normal window.
@@ -1203,7 +1208,7 @@ function love.load()
   -- created. The window starts borderless (conf.lua) and is sized to the desktop
   -- here, before any resource exists, since setMode can recreate the GL context.
   love.graphics.setDefaultFilter('nearest', 'nearest')
-  View.setBorderlessWindowed()
+  View.setNormalWindow() -- bordered, resizable, maximized (see conf.lua)
   require('pixelgrid').install() -- whole-pixel positions + whole-number scales for all drawing
   View.install()
   View.makeStars()
