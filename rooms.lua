@@ -112,13 +112,56 @@ end
 local TILE = 64
 Rooms.TILE, Rooms.WIDTH, Rooms.HEIGHT = TILE, 21 * TILE, 11 * TILE
 
+-- Box blocks are whole-tile rectangles: the collision box is exactly the area the
+-- boxes are drawn over (main.lua draws one box per tile cell of this rectangle).
 local function tileRect(col, row, cols, rows)
-  return { x = col * TILE, y = row * TILE, width = cols * TILE, height = rows * TILE }
+  return { x = col * TILE, y = row * TILE, width = cols * TILE, height = rows * TILE, solid = true }
 end
 
 local function overlaps(a, b, pad)
   return a.x < b.x + b.width + pad and b.x < a.x + a.width + pad
     and a.y < b.y + b.height + pad and b.y < a.y + a.height + pad
+end
+
+-- Density limits. None of this draws a random number, so seeded floors keep the same
+-- room graph, enemy placement and layout rolls; only over-full layouts get trimmed.
+local MAX_BEDS_PER_ROOM = 1
+-- Most box tiles (1 tile = 64 x 64 px) one room may contain, by floor. A room is 19 x 9
+-- walkable tiles, so boxes alone take at most about 5% of it (2% to 5%).
+local MAX_BOX_TILES = { default = 8, living_room = 6, kitchen = 6, bedroom = 4 }
+local BOSS_ROOM_MAX_BOX_TILES = 4 -- boss rooms: room to dodge and fight
+
+local function boxTiles(rect)
+  return (rect.width / TILE) * (rect.height / TILE)
+end
+
+-- Shrinks (then, only if a block is a single tile, drops) the biggest box blocks until
+-- the room is within its tile budget. Shrinking cuts the longer side by one tile from
+-- the far end, so blocks stay on the tile grid and inside the room.
+local function limitBoxDensity(layout, floorType, maxTiles)
+  maxTiles = maxTiles or MAX_BOX_TILES[floorType] or MAX_BOX_TILES.default
+  local walls = layout.walls
+  while true do
+    local total, biggest, biggestIndex = 0, nil, nil
+    for index, wall in ipairs(walls) do
+      total = total + boxTiles(wall)
+      if not biggest or boxTiles(wall) >= boxTiles(biggest) then
+        biggest, biggestIndex = wall, index
+      end
+    end
+    if total <= maxTiles or not biggest then
+      return
+    end
+    if biggest.width > TILE and biggest.width > biggest.height then
+      biggest.width = biggest.width - TILE
+    elseif biggest.height > TILE then
+      biggest.height = biggest.height - TILE
+    elseif biggest.width > TILE then
+      biggest.width = biggest.width - TILE
+    else
+      table.remove(walls, biggestIndex)
+    end
+  end
 end
 
 local function makeLayout(random, floorType)
@@ -142,8 +185,17 @@ local function makeLayout(random, floorType)
     decorations = {},
   }
 
+  local bedCount = 0
   local function obstacle(x, y, width, height, style)
-    local item = { x = x, y = y, width = width, height = height, style = style }
+    if style == 'bed' then -- never more than MAX_BEDS_PER_ROOM beds in one room
+      if bedCount >= MAX_BEDS_PER_ROOM then
+        return
+      end
+      bedCount = bedCount + 1
+    end
+    -- Furniture (bed, couch, ...) is solid over its whole drawn rectangle: the bed's
+    -- 256 x 128 px (4 x 2 tiles) frame and mattress included.
+    local item = { x = x, y = y, width = width, height = height, style = style, solid = true }
     layout.obstacles[#layout.obstacles + 1] = item
     layout.decorations[#layout.decorations + 1] = item
   end
@@ -189,6 +241,8 @@ local function makeLayout(random, floorType)
       end
     end
   end
+
+  limitBoxDensity(layout, floorType)
 
   return layout
 end
@@ -293,6 +347,26 @@ local function makeEnemies(random, floorType, layout)
   return enemies
 end
 
+-- Every rectangle in a layout that blocks movement: box blocks (layout.walls) plus
+-- furniture (layout.obstacles). Collision is rectangle based, not a cell grid, because
+-- furniture sits on pixel positions (the bed at x = 160 is not tile aligned); a cell flag
+-- grid would mark partial tiles and over- or under-block it. This list is what the player
+-- and enemies collide with. Projectiles keep their own rule and still use layout.walls.
+function Rooms.solidRects(layout)
+  local solids = {}
+  for _, wall in ipairs(layout.walls or {}) do
+    if wall.solid ~= false then
+      solids[#solids + 1] = wall
+    end
+  end
+  for _, item in ipairs(layout.obstacles or {}) do
+    if item.solid ~= false then
+      solids[#solids + 1] = item
+    end
+  end
+  return solids
+end
+
 function Rooms.generate(maxRooms, floorType, seed, floorIndex)
   maxRooms = math.max(3, math.min(maxRooms or 15, 20))
   floorType = floorType or 'basement'
@@ -385,6 +459,7 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
     bossTypes = { 'geometric' }
   end
   bossRoom.bossType = bossTypes[random(1, #bossTypes)]
+  limitBoxDensity(bossRoom.layout, floorType, BOSS_ROOM_MAX_BOX_TILES)
   bossRoom.roomType = 'boss'
   local bossNames = {
     crawler = 'Crawler Nest',

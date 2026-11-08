@@ -36,6 +36,14 @@ end
 local HUD_MARGIN = 16
 local HUD_ALPHA = 0.88
 
+-- Stat icons are 32 x 32 pixel art. They are always drawn at a whole-number scale
+-- (1 = native size) and never shrunk: a fractional or 0.5 scale makes nearest-neighbour
+-- sampling drop and double pixels unevenly, which is what makes them glitch.
+-- Use 2 for a bigger icon; do not use anything fractional.
+local STAT_ICON_SOURCE = 32
+local STAT_ICON_SCALE = 1
+local STAT_ICON_SIZE = STAT_ICON_SOURCE * STAT_ICON_SCALE
+
 -- Door sprites. Each sheet is 128 x 64 with 32 x 32 frames (see doors.json):
 -- closed (0,0), three opening frames (32..96, 0), open (0,32). The art is drawn
 -- for the TOP wall (wide edge outward) and rotated for the other three walls. At
@@ -73,7 +81,7 @@ end
 -- Costume sheets drawn over Matthew's sprite sheet (same frame layout), per
 -- evolution (see Player.EVOLUTIONS). Drawn in this order.
 local COSTUMES = {
-  { evolution = 'burnt_chilli', path = 'resources/gfx/characters/costumes/character_003_matthew-blushred.png' },
+  { evolution = 'burnt_chilli', path = 'resources/gfx/characters/costumes/costume_003_matthew-blushred.png' },
 }
 local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweatattack_fire.png'
 
@@ -194,7 +202,6 @@ function Renderer.new(atlas)
     attackSpeed = love.graphics.newImage('resources/gfx/ui/stats/stats_002_attackspeed.png'),
     damage = love.graphics.newImage('resources/gfx/ui/stats/stats_003_damage.png'),
     range = love.graphics.newImage('resources/gfx/ui/stats/stats_004_range.png'),
-    defense = love.graphics.newImage('resources/gfx/ui/stats/stats_005_defense.png'),
   }
   for _, image in pairs(renderer.statImages) do
     image:setFilter('nearest', 'nearest')
@@ -443,22 +450,30 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
         { key = 'range', value = isLocked and '?' or tostring(540), image = self.statImages.range },
         { key = 'attackSpeed', value = isLocked and '?' or '2.9', image = self.statImages.attackSpeed },
       }
-      local statIconSize = 18
+      -- Icons stay native 32 x 32 (never shrunk). The stats wrap into up to 3 columns so
+      -- they fit the card however far it is scaled down.
+      local statIconSize = STAT_ICON_SIZE
       local statGap = 10
       local statTextGap = 8
       local statsX = cardX + currentCardWidth * 0.12
-      local statsY = cardY + currentCardHeight * 0.6
+      local statsWidth = currentCardWidth * 0.76
+      local statsY = cardY + currentCardHeight * 0.61 + 8
       local rowEntries = {}
+      local widestEntry = 0
 
       for _, stat in ipairs(stats) do
         local valueText = tostring(stat.value)
+        local entryWidth = statIconSize + statTextGap + self.smallFont:getWidth(valueText)
+        widestEntry = math.max(widestEntry, entryWidth)
         rowEntries[#rowEntries + 1] = {
           image = stat.image,
           value = valueText,
           quad = stat.quad,
-          width = statIconSize + statTextGap + self.smallFont:getWidth(valueText),
+          width = entryWidth,
         }
       end
+      local statColumns = math.max(1, math.min(3,
+        math.floor((statsWidth + statGap) / (widestEntry + statGap))))
 
       local dividerY = cardY + currentCardHeight * 0.57
       love.graphics.setColor(0.95, 0.58, 0.18, 0.5)
@@ -470,18 +485,22 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
         1.5
       )
 
-      local x = statsX
-      local y = statsY + 4
-      for _, stat in ipairs(rowEntries) do
+      local statRowHeight = statIconSize + 6
+      local statColumnWidth = widestEntry + statGap
+      for index, stat in ipairs(rowEntries) do
+        local column = (index - 1) % statColumns
+        local row = math.floor((index - 1) / statColumns)
+        local x = math.floor(statsX + column * statColumnWidth)
+        local y = math.floor(statsY + row * statRowHeight)
         love.graphics.setColor(1, 1, 1, 1)
         if stat.quad then
-          love.graphics.draw(stat.image, stat.quad, math.floor(x), math.floor(y), 0, 1, 1)
+          love.graphics.draw(stat.image, stat.quad, x, y, 0, STAT_ICON_SCALE, STAT_ICON_SCALE)
         else
-          love.graphics.draw(stat.image, math.floor(x), math.floor(y), 0, 1, 1)
+          love.graphics.draw(stat.image, x, y, 0, STAT_ICON_SCALE, STAT_ICON_SCALE)
         end
         love.graphics.setColor(1, 0.79, 0.42, 1)
-        love.graphics.print(stat.value, math.floor(x + statIconSize + statTextGap), math.floor(y + 1))
-        x = x + stat.width + statGap
+        love.graphics.print(stat.value, x + statIconSize + statTextGap,
+          y + math.floor((statIconSize - self.smallFont:getHeight()) / 2))
       end
     end
   end
@@ -1375,26 +1394,28 @@ function Renderer:drawHud(player, items)
     { value = function() return tostring(math.max(1, math.floor(112 / 112))) end, image = self.statImages.range },
     { value = function() return tostring(player.stats.defense or 0) end, image = self.statImages.defense },
   }
-  local statRowHeight, statIconSize = 34, 22
-  local statX = 8
-  local statY = snap((screenHeight - #stats * statRowHeight) / 2)
-  love.graphics.setFont(self.statFont)
+  -- Icons are drawn at their native 32 x 32 (STAT_ICON_SCALE), never shrunk. Rows
+  -- without art (e.g. defense) are left out so the column stays vertically centred.
+  local visibleStats = {}
   for _, stat in ipairs(stats) do
-    local image = stat.image
-    if image then
-      local iconScale = snapScale(statIconSize / math.max(image:getWidth(), image:getHeight()))
-      local drawnWidth = image:getWidth() * iconScale
-      local drawnHeight = image:getHeight() * iconScale
-      love.graphics.setColor(1, 1, 1, HUD_ALPHA)
-      love.graphics.draw(image, statX, statY, 0, iconScale, iconScale)
-      printShadowed(
-        stat.value(),
-        snap(statX + math.max(statIconSize, drawnWidth) + 4),
-        snap(statY + (drawnHeight - self.statFont:getHeight()) / 2),
-        HUD_ALPHA
-      )
-      statY = statY + statRowHeight
+    if stat.image then
+      visibleStats[#visibleStats + 1] = stat
     end
+  end
+  local statRowHeight = STAT_ICON_SIZE + 4
+  local statX = 4
+  local statY = snap((screenHeight - #visibleStats * statRowHeight) / 2)
+  love.graphics.setFont(self.statFont)
+  for _, stat in ipairs(visibleStats) do
+    love.graphics.setColor(1, 1, 1, HUD_ALPHA)
+    love.graphics.draw(stat.image, statX, statY, 0, STAT_ICON_SCALE, STAT_ICON_SCALE)
+    printShadowed(
+      stat.value(),
+      snap(statX + STAT_ICON_SIZE + 2),
+      snap(statY + (STAT_ICON_SIZE - self.statFont:getHeight()) / 2),
+      HUD_ALPHA
+    )
+    statY = statY + statRowHeight
   end
 
   -- Collected items: bottom-left, over the bottom wall, growing upward.

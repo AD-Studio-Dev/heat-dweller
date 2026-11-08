@@ -214,6 +214,9 @@ View.CANVAS_WIDTH, View.CANVAS_HEIGHT = 1344, 756 -- exactly 16:9
 -- Where the room's (0, 0) lands inside the canvas.
 View.ROOM_OFFSET_X = (View.CANVAS_WIDTH - View.ROOM_WIDTH) / 2
 View.ROOM_OFFSET_Y = (View.CANVAS_HEIGHT - View.ROOM_HEIGHT) / 2
+-- Door transitions: eased camera slide, then a 0.4 s frozen grace period.
+-- See roomtransition.lua. The scene canvases are created in love.load().
+View.transition = require('roomtransition').new()
 
 -- x, y, width, height of a door, always centered on its wall.
 function View.doorRect(direction)
@@ -286,6 +289,22 @@ local function loadTileAssets()
   if love.filesystem.getInfo(CLOUD_IMAGE_PATH) then
     cloudImage = love.graphics.newImage(CLOUD_IMAGE_PATH)
     cloudImage:setFilter('nearest', 'nearest')
+  end
+
+  -- Obstacle art. box is 32 x 32 (drawn 2x per 64 px tile), bed is 128 x 64 (2x on the
+  -- 256 x 128 bed). Missing files fall back to the old placeholders instead of crashing.
+  View.obstacleImages = {}
+  for name, path in pairs({
+    box = 'resources/gfx/grid/obstacles_001_box.png',
+    bed = 'resources/gfx/grid/obstacles_002_bed.png',
+  }) do
+    if love.filesystem.getInfo(path) then
+      local image = love.graphics.newImage(path)
+      image:setFilter('nearest', 'nearest')
+      View.obstacleImages[name] = image
+    else
+      print('Obstacle art not found, using the placeholder: ' .. path)
+    end
   end
 
   tileOverlays = {}
@@ -669,7 +688,7 @@ end
 View.FIT_ROOM_TO_HEIGHT = false
 View.ROOM_VIEW_STATES = {
   playing = true, paused = true, boss_intro = true, item_selector = true,
-  cultist_choice = true, floor_transition = true,
+  cultist_choice = true, floor_transition = true, room_transition = true,
 }
 
 function View.viewRect()
@@ -1155,6 +1174,11 @@ function love.load()
   -- dpiscale = 1: exactly 1344x756 pixels whatever the monitor's DPI scale.
   View.canvas = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT, { dpiscale = 1 })
   View.canvas:setFilter('nearest', 'nearest')
+  -- Pictures of the room being left and the room being entered, for the slide.
+  View.sceneOld = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT, { dpiscale = 1 })
+  View.sceneNew = love.graphics.newCanvas(View.CANVAS_WIDTH, View.CANVAS_HEIGHT, { dpiscale = 1 })
+  View.sceneOld:setFilter('nearest', 'nearest')
+  View.sceneNew:setFilter('nearest', 'nearest')
   love.window.setTitle('Heat Dweller')
   loadTileAssets()
   initializeProfileAndItems()
@@ -1687,6 +1711,58 @@ end
 -- Crawler and Lil' Snake only move; unlike the other enemies they never touched
 -- the player. Damage the player when they overlap: a Crawler hit or a Lil' Snake
 -- head hit costs a full heart (boss damage), a Lil' Snake body hit costs half.
+-- Keeps a moving enemy out of every solid rectangle (box blocks and furniture) so it
+-- cannot walk through them. Circle against rectangle, like the player, so enemies slide
+-- along faces and round corners instead of sticking. `solids` is world.solidObstacles.
+-- Set entity.ignoresObstacles = true on anything that should fly over them.
+function View.pushOutOfSolids(entity, solids)
+  if not entity or entity.ignoresObstacles or not entity.x or not entity.y then
+    return
+  end
+  local radius
+  if entity.width and entity.height then
+    radius = math.min(entity.width, entity.height) / 2
+  else
+    radius = entity.radius
+  end
+  if not radius or radius <= 0 then
+    return
+  end
+
+  for _ = 1, 2 do -- a second pass settles corners where two solids meet
+    for _, rect in ipairs(solids) do
+      local closestX = math.max(rect.x, math.min(entity.x, rect.x + rect.width))
+      local closestY = math.max(rect.y, math.min(entity.y, rect.y + rect.height))
+      local offsetX, offsetY = entity.x - closestX, entity.y - closestY
+      local distanceSquared = offsetX * offsetX + offsetY * offsetY
+      if distanceSquared < radius * radius then
+        if distanceSquared > 0 then
+          local distance = math.sqrt(distanceSquared)
+          local push = radius - distance
+          entity.x = entity.x + offsetX / distance * push
+          entity.y = entity.y + offsetY / distance * push
+        else
+          -- Centre is inside the rectangle: leave through the nearest side.
+          local left = entity.x - rect.x
+          local right = rect.x + rect.width - entity.x
+          local top = entity.y - rect.y
+          local bottom = rect.y + rect.height - entity.y
+          local nearest = math.min(left, right, top, bottom)
+          if nearest == left then
+            entity.x = rect.x - radius
+          elseif nearest == right then
+            entity.x = rect.x + rect.width + radius
+          elseif nearest == top then
+            entity.y = rect.y - radius
+          else
+            entity.y = rect.y + rect.height + radius
+          end
+        end
+      end
+    end
+  end
+end
+
 local function applyBossContactDamage()
   if not player or player.stats.health <= 0 then
     return
@@ -1774,6 +1850,13 @@ function love.update(dt)
     return
   end
 
+  -- Room transition: slide, then the 0.4 s grace period. Returning here is what locks
+  -- everything: no input, no player/enemy/boss updates, no projectiles, no pickups.
+  if gameState == 'room_transition' then
+    updateRoomTransition(dt)
+    return
+  end
+
   if gameState == 'boss_intro' then
     bossIntroTimer = bossIntroTimer + dt
     if bossIntroTimer >= 1.8 then
@@ -1830,7 +1913,10 @@ function love.update(dt)
 
   input:update()
   world.floorHoles = currentRoom and currentRoom.layout.floorHoles or {}
-  world.solidObstacles = currentRoom and currentRoom.layout.obstacles or {}
+  -- Boxes AND furniture block movement. (Before, only furniture did, so the player
+  -- walked straight through the box blocks.) Sweat shots and fire foam are unchanged:
+  -- they still get layout.walls only.
+  world.solidObstacles = currentRoom and Rooms.solidRects(currentRoom.layout) or {}
   if not lilSnake and currentRoom then
     for index = #world.floorHoles, 1, -1 do
       local hole = world.floorHoles[index]
@@ -1904,10 +1990,10 @@ function love.update(dt)
     lilSnake:update(dt, player)
   end
   if geometric then
-    geometric:update(dt, player, currentRoom and currentRoom.layout.walls or {})
+    geometric:update(dt, player, world.solidObstacles)
   end
   if stuffing then
-    stuffing:update(dt, player, currentRoom and currentRoom.layout.walls or {})
+    stuffing:update(dt, player, world.solidObstacles)
   end
   if babyWidow then
     local spiderCount = babyWidow:update(dt, player)
@@ -1939,6 +2025,7 @@ function love.update(dt)
     if enemy and type(enemy.update) == 'function' and enemy.alive then
       local spawned = enemy:update(dt, player, world)
       require('knockback').update(enemy, dt, world)
+      View.pushOutOfSolids(enemy, world.solidObstacles)
       if spawned and type(spawned) == 'table' then
         for _, child in ipairs(spawned) do
           if child and type(child.update) == 'function' then
@@ -2262,7 +2349,8 @@ function drawActiveEffects(camera)
 end
 
 function love.quit()
-  if currentRoom and (gameState == 'playing' or gameState == 'paused' or gameState == 'boss_intro') then
+  if currentRoom and (gameState == 'playing' or gameState == 'paused' or gameState == 'boss_intro'
+      or gameState == 'room_transition') then
     local saved, saveError = saveRun()
     if not saved then
       print('Save failed: ' .. tostring(saveError))
@@ -2348,6 +2436,80 @@ function love.draw()
   View.drawFrame()
   love.graphics.setCanvas()
   View.present()
+end
+
+-- Everything inside the room (floor, walls, doors, items, enemies, projectiles, player),
+-- without the HUD. Used for the live frame and for the transition snapshots.
+function drawGameplayScene(shakeX, shakeY)
+  local cameraX, cameraY = world.camera.x, world.camera.y
+  world.camera.x = cameraX - shakeX - View.ROOM_OFFSET_X
+  world.camera.y = cameraY - shakeY - View.ROOM_OFFSET_Y
+  drawWorld()
+  items:draw(world.camera)
+  drawActiveEffects(world.camera)
+  drawSpecialRoomContents()
+  for _, enemy in ipairs(enemies) do
+    if enemy.kind == 'fly' or enemy.selfDrawn then
+      enemy:draw(world.camera)
+    else
+      renderer:drawEnemy(enemy, world.camera)
+    end
+  end
+  for _, projectile in ipairs(acidProjectiles) do
+    renderer:drawAcidProjectile(projectile, world.camera)
+  end
+  for _, projectile in ipairs(sweatProjectiles) do
+    renderer:drawSweatProjectile(projectile, world.camera)
+  end
+  for _, splash in ipairs(sweatSplashes) do
+    renderer:drawSweatSplash(splash, world.camera)
+  end
+  renderer:drawCrawler(crawler, world.camera)
+  renderer:drawGeometric(geometric, world.camera)
+  renderer:drawStuffing(stuffing, world.camera)
+  if stuffing and stuffing.projectiles then
+    for _, projectile in ipairs(stuffing.projectiles) do
+      renderer:drawStuffingProjectile(projectile, world.camera)
+    end
+  end
+  renderer:drawBabyWidow(babyWidow, world.camera)
+  if lilSnake then
+    lilSnake:draw(world.camera)
+  end
+  renderer:drawPlayer(player, world.camera)
+  renderer:drawFireFoam(player, world.camera, fireFoam.beam)
+  items:drawStatNotifications(world.camera)
+  world.camera.x, world.camera.y = cameraX, cameraY
+end
+
+-- Renders the current room (no HUD, no shake) into `canvas`.
+function View.captureScene(canvas)
+  local previous = love.graphics.getCanvas()
+  love.graphics.setCanvas(canvas)
+  love.graphics.clear(0.055, 0.07, 0.08, 1)
+  drawGameplayScene(0, 0)
+  if previous then
+    love.graphics.setCanvas(previous)
+  else
+    love.graphics.setCanvas()
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- The slide: old room and new room side by side, panned by the eased offsets. The HUD
+-- stays where it is, like the real game.
+function View.drawRoomSlide()
+  local raw = require('pixelgrid').raw
+  local oldX, oldY, newX, newY = View.transition:getOffsets(View.CANVAS_WIDTH, View.CANVAS_HEIGHT)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.setBlendMode('alpha', 'premultiplied')
+  raw.draw(View.sceneOld, oldX, oldY, 0, 1, 1)
+  raw.draw(View.sceneNew, newX, newY, 0, 1, 1)
+  love.graphics.setBlendMode('alpha', 'alphamultiply')
+  renderer:drawHud(player, items)
+  renderer:drawActiveItem(items.heldActive, items.cooldownRemaining)
+  renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 View.drawFrame = function()
@@ -2481,49 +2643,15 @@ View.drawFrame = function()
     return
   end
 
+  -- Door slide: two room pictures panning across the screen. During the grace period
+  -- that follows, the normal frame below is drawn (the room is simply frozen).
+  if gameState == 'room_transition' and View.transition:isSliding() then
+    View.drawRoomSlide()
+    return
+  end
+
   local shakeX, shakeY = getScreenShakeOffset()
-  local cameraX, cameraY = world.camera.x, world.camera.y
-  local screenWidth, screenHeight = love.graphics.getDimensions()
-  local letterboxX = View.ROOM_OFFSET_X
-  local letterboxY = View.ROOM_OFFSET_Y
-  world.camera.x = cameraX - shakeX - letterboxX
-  world.camera.y = cameraY - shakeY - letterboxY
-  drawWorld()
-  items:draw(world.camera)
-  drawActiveEffects(world.camera)
-  drawSpecialRoomContents()
-  for _, enemy in ipairs(enemies) do
-    if enemy.kind == 'fly' or enemy.selfDrawn then
-      enemy:draw(world.camera)
-    else
-      renderer:drawEnemy(enemy, world.camera)
-    end
-  end
-  for _, projectile in ipairs(acidProjectiles) do
-    renderer:drawAcidProjectile(projectile, world.camera)
-  end
-  for _, projectile in ipairs(sweatProjectiles) do
-    renderer:drawSweatProjectile(projectile, world.camera)
-  end
-  for _, splash in ipairs(sweatSplashes) do
-    renderer:drawSweatSplash(splash, world.camera)
-  end
-  renderer:drawCrawler(crawler, world.camera)
-  renderer:drawGeometric(geometric, world.camera)
-  renderer:drawStuffing(stuffing, world.camera)
-  if stuffing and stuffing.projectiles then
-    for _, projectile in ipairs(stuffing.projectiles) do
-      renderer:drawStuffingProjectile(projectile, world.camera)
-    end
-  end
-  renderer:drawBabyWidow(babyWidow, world.camera)
-  if lilSnake then
-    lilSnake:draw(world.camera)
-  end
-  renderer:drawPlayer(player, world.camera)
-  renderer:drawFireFoam(player, world.camera, fireFoam.beam)
-  items:drawStatNotifications(world.camera)
-  world.camera.x, world.camera.y = cameraX, cameraY
+  drawGameplayScene(shakeX, shakeY)
 
   renderer:drawHud(player, items)
   renderer:drawActiveItem(items.heldActive, items.cooldownRemaining)
@@ -2769,6 +2897,11 @@ function love.keypressed(key)
     return
   end
 
+  -- Interactions are locked during door transitions (and every other non-play state).
+  if gameState ~= 'playing' then
+    return
+  end
+
   if key == input.bindings.interact or key == 'return' then
     if tryShopPurchase() or tryCultistOffer() then
       return
@@ -2904,6 +3037,24 @@ function drawWorldFramed()
   camera.x, camera.y = -View.ROOM_OFFSET_X, -View.ROOM_OFFSET_Y
   drawWorld()
   camera.x, camera.y = savedX, savedY
+end
+
+-- Draws the box sprite over a wall rectangle: one box per tile cell, scaled to the cell.
+-- The wall rectangles are whole tiles, so a 64 px tile is a clean 2x of the 32 px art.
+-- The cell size is rect / count, so an odd-sized block still gets evenly sized boxes
+-- (the scale then follows the cell). Only drawing: collision uses the rectangle itself.
+function View.drawBoxBlock(image, rect, tileSize)
+  local columns = math.max(1, math.floor(rect.width / tileSize + 0.5))
+  local rows = math.max(1, math.floor(rect.height / tileSize + 0.5))
+  local cellWidth, cellHeight = rect.width / columns, rect.height / rows
+  local scaleX, scaleY = cellWidth / image:getWidth(), cellHeight / image:getHeight()
+  love.graphics.setColor(1, 1, 1, 1)
+  for column = 0, columns - 1 do
+    for row = 0, rows - 1 do
+      love.graphics.draw(image, rect.x + column * cellWidth, rect.y + row * cellHeight,
+        0, scaleX, scaleY)
+    end
+  end
 end
 
 function drawWorld()
@@ -3055,12 +3206,21 @@ function drawWorld()
           love.graphics.rectangle('fill', decoration.x, decoration.y, decoration.width, 14)
           love.graphics.rectangle('line', decoration.x + 8, decoration.y + 20, decoration.width - 16, decoration.height - 28)
         elseif style == 'bed' then
-          love.graphics.setColor(0.28, 0.18, 0.14, 1)
-          love.graphics.rectangle('fill', decoration.x, decoration.y, decoration.width, decoration.height, 8, 8)
-          love.graphics.setColor(0.67, 0.61, 0.67, 1)
-          love.graphics.rectangle('fill', decoration.x + 14, decoration.y + 28, decoration.width - 28, decoration.height - 42, 8, 8)
-          love.graphics.setColor(0.86, 0.82, 0.76, 1)
-          love.graphics.rectangle('fill', decoration.x + 22, decoration.y + 34, 72, 36, 6, 6)
+          local bedImage = View.obstacleImages and View.obstacleImages.bed
+          if bedImage then
+            -- Scaled to the obstacle's rectangle (the collision box), so art and
+            -- collision always line up.
+            love.graphics.setColor(1, 1, 1, 1)
+            love.graphics.draw(bedImage, decoration.x, decoration.y, 0,
+              decoration.width / bedImage:getWidth(), decoration.height / bedImage:getHeight())
+          else
+            love.graphics.setColor(0.28, 0.18, 0.14, 1)
+            love.graphics.rectangle('fill', decoration.x, decoration.y, decoration.width, decoration.height, 8, 8)
+            love.graphics.setColor(0.67, 0.61, 0.67, 1)
+            love.graphics.rectangle('fill', decoration.x + 14, decoration.y + 28, decoration.width - 28, decoration.height - 42, 8, 8)
+            love.graphics.setColor(0.86, 0.82, 0.76, 1)
+            love.graphics.rectangle('fill', decoration.x + 22, decoration.y + 34, 72, 36, 6, 6)
+          end
         elseif style == 'cloud_platform' then
           love.graphics.setColor(0.9, 0.97, 1, 0.9)
           love.graphics.ellipse('fill', decoration.x + decoration.width / 2, decoration.y + 12, decoration.width / 2, 22)
@@ -3125,12 +3285,18 @@ function drawWorld()
       love.graphics.ellipse('fill', hole.x, hole.y, hole.radius, hole.radius * 0.68)
     end
     love.graphics.setColor(isShop and 0.32 or isCultistDeal and 0.25 or 0.18, isShop and 0.2 or isCultistDeal and 0.08 or 0.17, isShop and 0.08 or isCultistDeal and 0.24 or 0.17, 1)
+    local boxImage = View.obstacleImages and View.obstacleImages.box
     for _, wall in ipairs(currentRoom.layout.walls) do
-      love.graphics.rectangle('fill', wall.x, wall.y, wall.width, wall.height)
-      love.graphics.setColor(0.28, 0.25, 0.22, 1)
-      love.graphics.rectangle('line', wall.x, wall.y, wall.width, wall.height)
-      love.graphics.setColor(0.18, 0.17, 0.17, 1)
+      if boxImage then
+        View.drawBoxBlock(boxImage, wall, tileSize)
+      else
+        love.graphics.rectangle('fill', wall.x, wall.y, wall.width, wall.height)
+        love.graphics.setColor(0.28, 0.25, 0.22, 1)
+        love.graphics.rectangle('line', wall.x, wall.y, wall.width, wall.height)
+        love.graphics.setColor(0.18, 0.17, 0.17, 1)
+      end
     end
+    love.graphics.setColor(1, 1, 1, 1)
   end
 
   -- Angled stone wall frame (Isaac-style 2.5D perspective). It spans the whole
@@ -3570,6 +3736,54 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   end
 end
 
+-- Door transition: the camera slides from the room we are leaving to the new one,
+-- then the new room is held frozen for a 0.4 s grace period (roomtransition.lua).
+-- Entering a boss room skips both: it goes straight to the boss intro. Leaving a
+-- boss room (to the previous room or the deal room) uses the slide as normal.
+function beginRoomTransition(targetIndex, direction)
+  -- 1. Nothing that moves or hurts may be on screen: clear every projectile and hazard
+  --    first, so the picture of the old room has none either.
+  sweatProjectiles = {}
+  sweatSplashes = {}
+  acidProjectiles = {}
+  activeFireZones = {}
+  fireFoam = FireFoam.new()
+  player.velocityX, player.velocityY = 0, 0 -- no drift carried into the new room
+
+  -- Boss rooms: no slide, no grace period. enterRoom() starts the boss intro itself.
+  if rooms[targetIndex] and rooms[targetIndex].boss then
+    enterRoom(targetIndex, direction)
+    return
+  end
+
+  -- 2. Picture of the room we are leaving.
+  View.captureScene(View.sceneOld)
+
+  -- 3. Build the new room exactly as before: enemies, doors, music, autosave.
+  enterRoom(targetIndex, direction)
+  local nextState = gameState -- 'playing', or 'boss_intro' for an uncleared boss room
+
+  -- 4. Picture of the new room as it will be when play resumes.
+  View.captureScene(View.sceneNew)
+
+  -- 5. Freeze. While gameState is 'room_transition', love.update skips everything.
+  if nextState == 'boss_intro' then
+    bossIntroMusic:pause() -- the intro jingle waits until the boss intro screen shows
+  end
+  View.transition:start(direction, nextState)
+  gameState = 'room_transition'
+end
+
+-- Called from love.update while a transition runs. This is the only thing that runs.
+function updateRoomTransition(dt)
+  if View.transition:update(dt) then
+    gameState = View.transition.nextState
+    if gameState == 'boss_intro' then
+      bossIntroMusic:play() -- resumes the paused intro music
+    end
+  end
+end
+
 function tryRoomTransition()
   if not currentRoom or doorsLocked then
     return false
@@ -3583,7 +3797,7 @@ function tryRoomTransition()
       and not currentRoom.dealUnlocked
     if connectedId and not hiddenDealDoor and not (door and door.locked)
         and View.atDoor(candidate) then
-      enterRoom(connectedId, candidate)
+      beginRoomTransition(connectedId, candidate)
       return true
     end
   end
