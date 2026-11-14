@@ -28,6 +28,9 @@ function Player.new(config)
     frameSpeed = config.frameSpeed or 0.08,
     blinkDuration = config.blinkDuration or 0.12,
     blinkInterval = config.blinkInterval or 2.5,
+    pickupItem = nil,       -- item definition held overhead during a pickup
+    pickupTime = 0,
+    pickupBounceDuration = config.pickupBounceDuration or 0.15, -- pickup_1, then hold pickup_2
 
     facing = 'down',
     walkFacing = 'down',
@@ -388,7 +391,7 @@ function Player:updateBlink(dt)
     if self.blinkTime >= self.blinkDuration then
       self.blinking = false
       self.blinkTime = 0
-      self.nextBlink = self.blinkInterval
+      self.nextBlink = self.blinkInterval * (0.7 + math.random() * 0.6)
     end
   else
     self.nextBlink = self.nextBlink - dt
@@ -399,46 +402,77 @@ function Player:updateBlink(dt)
   end
 end
 
+-- Item pickup pose: pickup_1 (bounce) then pickup_2 (arms raised) while the
+-- collected item floats over the head. main.lua starts/ends it with the pickup.
+function Player:startPickup(item)
+  self.pickupItem = item
+  self.pickupTime = 0
+end
+
+function Player:updatePickup(dt)
+  if self.pickupItem then
+    self.pickupTime = self.pickupTime + dt
+  end
+end
+
+function Player:endPickup()
+  self.pickupItem = nil
+  self.pickupTime = 0
+end
+
+function Player:isPickingUp()
+  return self.pickupItem ~= nil
+end
+
+function Player:isDead()
+  return self.stats.health <= 0
+end
+
+local WALK_FORWARD_FRAMES = 8 -- walk_forward_0..7
+local WALK_RIGHT_FRAMES = 7   -- walk_right_0..6
+
 function Player:getBodyFrame()
-  if self.isHurt then
-    local frameIndex = math.floor(self.hurtAnimationTime / self.hurtFrameDuration) % 4
-    return 'hurt_' .. frameIndex
+  if self.pickupItem then
+    return self.pickupTime < self.pickupBounceDuration and 'pickup_1' or 'pickup_2'
   end
 
-  if not self.moving then
-    return 'body_idle'
-  end
-
-  local frames
   local walkFacing = self.walkFacing or self.facing
-  if walkFacing == 'left' or walkFacing == 'right' then
-    frames = {
-      'walk_right_0', 'walk_right_1', 'walk_right_2',
-      'walk_right_3', 'walk_right_4', 'walk_right_5',
-    }
-  else
-    frames = {
-      'walk_down_0', 'walk_down_1', 'walk_down_2',
-      'walk_down_3', 'walk_down_4',
-    }
+  local sideways = walkFacing == 'left' or walkFacing == 'right'
+  local prefix = sideways and 'walk_right_' or 'walk_forward_'
+
+  -- Hurt and dead bodies stand still; only the head changes (hurt_head / death_head).
+  if not self.moving or self.isHurt or self:isDead() then
+    return prefix .. '0'
   end
 
-  local cycleDuration = self.frameSpeed * #frames
+  local count = sideways and WALK_RIGHT_FRAMES or WALK_FORWARD_FRAMES
+  local cycleDuration = self.frameSpeed * count
   local cycleTime = self.animationTime % cycleDuration
-  local frameIndex = math.min(#frames, math.floor(cycleTime / self.frameSpeed) + 1)
-  return frames[frameIndex]
+  local frameIndex = math.min(count - 1, math.floor(cycleTime / self.frameSpeed))
+  return prefix .. frameIndex
 end
 
 function Player:getHeadFrame()
-  local frame = 'head_forward_1'
-  if self.facing == 'up' then
-    frame = 'head_back_1'
-  elseif self.facing == 'left' or self.facing == 'right' then
-    frame = 'head_right_1'
+  if self.pickupItem then
+    return 'pickup_head'
+  end
+  if self:isDead() then
+    return 'death_head'
+  end
+  if self.isHurt then
+    return 'hurt_head'
   end
 
+  local frame = 'head_forward'
+  if self.facing == 'up' then
+    frame = 'head_back'
+  elseif self.facing == 'left' or self.facing == 'right' then
+    frame = 'head_right' -- the renderer mirrors it for 'left'
+  end
+
+  -- Periodic blink only; shooting never triggers it.
   if self.blinking then
-    frame = frame:gsub('_1$', '_blink')
+    frame = frame .. '_blink'
   end
 
   return frame

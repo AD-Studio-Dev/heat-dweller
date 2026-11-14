@@ -1642,16 +1642,29 @@ function Renderer:drawPlayer(player, camera)
   local costumable = not skyForm and self.atlas.imagePath
     and string.find(self.atlas.imagePath, 'matthew', 1, true) ~= nil
   local bodyFrame, headFrame = player:getBodyFrame(), player:getHeadFrame()
+  -- The 30x28 head is seated on the 17px body so they overlap ~3px at the
+  -- collar; the offset follows the body pose so the head bobs with the walk.
+  local headY = drawY + snap(self.atlas:getHeadOffset(bodyFrame) * scale)
 
   self:drawFrame(bodyFrame, drawX, drawY, scaleX, scale)
   if costumable then
     self:drawCostumeOverlays(player, bodyFrame, drawX, drawY, scaleX, scale)
   end
-  if not player.isHurt then
-    self:drawFrame(headFrame, drawX, drawY, scaleX, scale)
-    if costumable then
-      self:drawCostumeOverlays(player, headFrame, drawX, drawY, scaleX, scale)
-    end
+  self:drawFrame(headFrame, drawX, headY, scaleX, scale)
+  if costumable then
+    self:drawCostumeOverlays(player, headFrame, drawX, headY, scaleX, scale)
+  end
+
+  local pickupItem = player.pickupItem
+  if pickupItem and pickupItem.image then
+    -- Collected item floats above the head and bobs gently.
+    local image = pickupItem.image
+    local itemScale = snapScale(math.min(2, 32 / math.max(image:getWidth(), image:getHeight())))
+    local bob = math.sin(love.timer.getTime() * 5) * 2
+    local headTop = headY + 2 * scale
+    local itemX = drawX + (scaleX < 0 and -width or 0) + width / 2 - image:getWidth() * itemScale / 2
+    local itemY = headTop - image:getHeight() * itemScale - 6 + bob
+    love.graphics.draw(image, snap(itemX), snap(itemY), 0, itemScale, itemScale)
   end
 
   love.graphics.setColor(1, 1, 1, 1)
@@ -1820,14 +1833,16 @@ end
 function Renderer:drawCostumeOverlays(player, frameName, x, y, scaleX, scaleY)
   for _, costume in ipairs(COSTUMES) do
     local image = self.costumeImages[costume.evolution]
-    if image and player:hasEvolution(costume.evolution) then
+    -- Costume sheets must share the new 832x32 strip layout; older 40x40
+    -- costume sheets are skipped until they are redrawn.
+    if image and self.atlas:matchesLayout(image) and player:hasEvolution(costume.evolution) then
       self:drawFrame(frameName, x, y, scaleX, scaleY, image)
     end
   end
 end
 
 function Renderer:drawFrame(frameName, x, y, scaleX, scaleY, image)
-  local frame = self.atlas.frames[frameName]
+  local frame = self.atlas:getFrame(frameName)
   if not frame then
     return
   end

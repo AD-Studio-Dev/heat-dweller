@@ -13,8 +13,8 @@
 local RoomTransition = {}
 RoomTransition.__index = RoomTransition
 
-RoomTransition.SLIDE_DURATION = 0.3
-RoomTransition.GRACE_DURATION = 0.05
+RoomTransition.SLIDE_DURATION = 0.35
+RoomTransition.GRACE_DURATION = 0.2
 
 -- Unit vector the camera travels in when leaving through a given door.
 local TRAVEL = {

@@ -168,10 +168,10 @@ local characters = {
     name = 'Matthew',
     title = 'Son of Mark',
     subtitle = 'Son of Mark',
-    quote = "I'm coming for whoever did this to me.",
+    quote = "I'm going, one step at a time.",
     isUnlocked = true,
     imagePath = 'resources/sprites/characters/character_001_matthew.png',
-    spriteSheetPath = 'resources/gfx/characters/character_001_matthew.png',
+    spriteSheetPath = 'resources/gfx/characters/characters_001_matthew.png',
   },
   {
     name = 'Stella',
@@ -523,7 +523,7 @@ local function updatePlayerSpriteForFloor()
     return
   end
 
-  local standardPath = selectedCharacter.spriteSheetPath or 'resources/gfx/characters/character_001_matthew.png'
+  local standardPath = selectedCharacter.spriteSheetPath or 'resources/gfx/characters/characters_001_matthew.png'
   local activePath = world and world.floorType == 'sky'
       and 'resources/gfx/characters/character_001_matthew-angel.png'
       or standardPath
@@ -985,6 +985,7 @@ local function resetPlayerRunState()
   isPickingUpItem = false
   pickupTimer = 0
   pickupNotification = nil
+  if player then player:endPickup() end
   pickupNotificationElapsed = 0
   waitingForPickupSound = false
   shopOffers = nil
@@ -1291,6 +1292,7 @@ function love.load()
   isPickingUpItem = false
   pickupTimer = 0
   pickupNotification = nil
+  if player then player:endPickup() end
   pickupNotificationElapsed = 0
 
   initializeMenu()
@@ -2231,9 +2233,11 @@ function love.update(dt)
 
   if isPickingUpItem then
     pickupTimer = pickupTimer - dt
+    player:updatePickup(dt)
     if pickupTimer <= 0 then
       isPickingUpItem = false
       pickupTimer = 0
+      player:endPickup()
     end
     return
   end
@@ -2444,6 +2448,7 @@ function love.update(dt)
   items:update(dt, player, function(definition)
     isPickingUpItem = true
     pickupTimer = 0.8
+    player:startPickup(definition)
     pickupNotification = definition
     pickupNotificationElapsed = 0
     pauseGameAudio()
@@ -4287,6 +4292,7 @@ function startGame(debugBossType)
   isPickingUpItem = false
   pickupTimer = 0
   pickupNotification = nil
+  if player then player:endPickup() end
   pickupNotificationElapsed = 0
   waitingForPickupSound = false
   bossDebugMenuOpen = false
