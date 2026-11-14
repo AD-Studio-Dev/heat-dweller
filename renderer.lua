@@ -64,6 +64,11 @@ local DOOR_FRAME_SIZE, DOOR_SCALE, DOOR_FRAME_SECONDS = 32, 2, 0.1
 local DOOR_ROTATION = { up = 0, right = math.pi / 2, down = math.pi, left = -math.pi / 2 }
 
 -- Optional art: a missing file just means the normal look, never a crash.
+-- 16x16 minimap room sprites: the room Matthew is in, and every other seen room.
+local MINIMAP_INSIDE_PATH = 'resources/gfx/grid/minimap_insideroom_1x1.png'
+local MINIMAP_OUTSIDE_PATH = 'resources/gfx/grid/minimap_outsideroom_1x1.png'
+local MINIMAP_CELL = 16
+
 local function loadOptionalImage(path)
   if not love.filesystem.getInfo(path) then
     print('Missing image: ' .. path)
@@ -123,6 +128,13 @@ function Renderer.new(atlas)
   renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
   renderer.fireSweatImage = loadOptionalImage(FIRE_SWEAT_PATH)
+  renderer.minimapInsideImage = loadOptionalImage(MINIMAP_INSIDE_PATH)
+  renderer.minimapOutsideImage = loadOptionalImage(MINIMAP_OUTSIDE_PATH)
+  for _, image in ipairs({ renderer.minimapInsideImage or false, renderer.minimapOutsideImage or false }) do
+    if image then
+      image:setFilter('nearest', 'nearest')
+    end
+  end
   renderer.costumeImages = {}
   for _, costume in ipairs(COSTUMES) do
     renderer.costumeImages[costume.evolution] = loadOptionalImage(costume.path)
@@ -1563,6 +1575,16 @@ function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
   local cellSize = math.floor(math.min((panelWidth - padding * 2) / gridWidth, (panelHeight - padding * 2) / gridHeight))
   cellSize = math.max(8, math.min(22, cellSize))
 
+  -- With the 16x16 room sprites, one room = one 16px cell drawn at 1x. The
+  -- sprites carry their own 1px transparent margin, so neighbors sit 2px apart
+  -- with no overlap. The panel grows if a large floor needs more than it holds.
+  local useSprites = self.minimapInsideImage ~= nil and self.minimapOutsideImage ~= nil
+  if useSprites then
+    cellSize = MINIMAP_CELL
+    panelWidth = math.max(panelWidth, gridWidth * cellSize + padding * 2)
+    panelHeight = math.max(panelHeight, gridHeight * cellSize + padding * 2)
+  end
+
   love.graphics.setColor(0.03, 0.04, 0.05, 0.5)
   love.graphics.rectangle('fill', panelX, panelY, panelWidth, panelHeight)
   love.graphics.setColor(0.65, 0.68, 0.7, 0.35)
@@ -1592,31 +1614,55 @@ function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
   for _, room in ipairs(rooms) do
     if seenRooms[room.id] then
       local x, y = roomPosition(room)
-      if room.id == currentRoomId then
-        love.graphics.setColor(0.95, 0.72, 0.2, 1)
-      elseif not exploredRooms[room.id] then
-        love.graphics.setColor(0.48, 0.5, 0.53, 0.9)
-      elseif room.cleared then
-        love.graphics.setColor(0.25, 0.78, 0.42, 0.9)
-      elseif room.boss then
-        love.graphics.setColor(0.82, 0.25, 0.22, 0.9)
+      if useSprites then
+        local sprite = room.id == currentRoomId and self.minimapInsideImage or self.minimapOutsideImage
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.draw(sprite, math.floor(x - MINIMAP_CELL / 2), math.floor(y - MINIMAP_CELL / 2))
       else
-        love.graphics.setColor(0.7, 0.72, 0.75, 0.78)
+        if room.id == currentRoomId then
+          love.graphics.setColor(0.95, 0.72, 0.2, 1)
+        elseif not exploredRooms[room.id] then
+          love.graphics.setColor(0.48, 0.5, 0.53, 0.9)
+        elseif room.cleared then
+          love.graphics.setColor(0.25, 0.78, 0.42, 0.9)
+        elseif room.boss then
+          love.graphics.setColor(0.82, 0.25, 0.22, 0.9)
+        else
+          love.graphics.setColor(0.7, 0.72, 0.75, 0.78)
+        end
+        love.graphics.rectangle('fill', math.floor(x - cellSize / 2 + 2), math.floor(y - cellSize / 2 + 2), cellSize - 4, cellSize - 4)
       end
-      love.graphics.rectangle('fill', math.floor(x - cellSize / 2 + 2), math.floor(y - cellSize / 2 + 2), cellSize - 4, cellSize - 4)
     end
   end
 
   love.graphics.setLineWidth(1)
+  love.graphics.setColor(1, 1, 1, 1)
 end
+
+-- Matthew's strip frames are 32x32 and drawn at an exact 2x so pixels stay crisp.
+-- The sprite is anchored by its feet: cell column 16 sits on the hitbox center
+-- and the body's bottom row (27) sits PLAYER_FEET_OFFSET below it.
+local PLAYER_SPRITE_SCALE = 2
+local PLAYER_FEET_ROW = 27
+local PLAYER_FEET_OFFSET = 22
 
 function Renderer:drawPlayer(player, camera)
   local width = player.width
   local height = player.height
-  local drawX = math.floor(player.x - camera.x - width / 2)
-  local drawY = math.floor(player.y - camera.y - height / 2)
-  local scale = 2
-  local scaleX = player.facing == 'left' and -scale or scale
+  local centerX = player.x - camera.x
+  local centerY = player.y - camera.y
+  local legacy = self.atlas.layout == 'legacy'
+  local scale = legacy and 2 or PLAYER_SPRITE_SCALE
+  local spriteSize = legacy and width or self.atlas.frameSize * scale
+  local drawX, drawY
+  if legacy then
+    drawX = math.floor(centerX - width / 2)
+    drawY = math.floor(centerY - height / 2)
+  else
+    drawX = math.floor(centerX - spriteSize / 2)
+    drawY = math.floor(centerY + PLAYER_FEET_OFFSET - PLAYER_FEET_ROW * scale)
+  end
+  local facingLeft = player.facing == 'left'
   local skyForm = self.atlas and self.atlas.imagePath
     and string.find(self.atlas.imagePath, 'matthew-angel.png', 1, true)
 
@@ -1626,10 +1672,10 @@ function Renderer:drawPlayer(player, camera)
     drawY = snap(drawY + math.sin(love.timer.getTime() * bobSpeed) * bobAmplitude)
   end
 
-  -- A negative scale mirrors around the draw point, so move left-facing
-  -- sprites one width to keep their center in the same place.
-  if scaleX < 0 then
-    drawX = drawX + width
+  -- A negative scale mirrors around the draw point, so shift mirrored sprites
+  -- one sprite width to keep their center in the same place.
+  local function mirrorX(mirrored)
+    return mirrored and -scale or scale, mirrored and drawX + spriteSize or drawX
   end
 
   local alpha = 1
@@ -1643,27 +1689,31 @@ function Renderer:drawPlayer(player, camera)
     and string.find(self.atlas.imagePath, 'matthew', 1, true) ~= nil
   local bodyFrame, headFrame = player:getBodyFrame(), player:getHeadFrame()
   -- The 30x28 head is seated on the 17px body so they overlap ~3px at the
-  -- collar; the offset follows the body pose so the head bobs with the walk.
+  -- collar; the offset (in sprite pixels) scales with the draw scale and
+  -- follows the body pose so the head bobs with the walk.
   local headY = drawY + snap(self.atlas:getHeadOffset(bodyFrame) * scale)
 
-  self:drawFrame(bodyFrame, drawX, drawY, scaleX, scale)
+  -- Only the side-view body mirrors; front/back bodies are drawn as-is.
+  local bodyScaleX, bodyX = mirrorX(facingLeft and (legacy or bodyFrame:find('^walk_right') ~= nil))
+  self:drawFrame(bodyFrame, bodyX, drawY, bodyScaleX, scale)
   if costumable then
-    self:drawCostumeOverlays(player, bodyFrame, drawX, drawY, scaleX, scale)
+    self:drawCostumeOverlays(player, bodyFrame, bodyX, drawY, bodyScaleX, scale)
   end
-  self:drawFrame(headFrame, drawX, headY, scaleX, scale)
+  local headScaleX, headX = mirrorX(legacy and facingLeft or player:isHeadMirrored())
+  self:drawFrame(headFrame, headX, headY, headScaleX, scale)
   if costumable then
-    self:drawCostumeOverlays(player, headFrame, drawX, headY, scaleX, scale)
+    self:drawCostumeOverlays(player, headFrame, headX, headY, headScaleX, scale)
   end
 
   local pickupItem = player.pickupItem
-  if pickupItem and pickupItem.image then
-    -- Collected item floats above the head and bobs gently.
+  if pickupItem and pickupItem.image and not legacy then
+    -- Collected item floats centered above the (scaled) head and bobs gently.
     local image = pickupItem.image
-    local itemScale = snapScale(math.min(2, 32 / math.max(image:getWidth(), image:getHeight())))
-    local bob = math.sin(love.timer.getTime() * 5) * 2
-    local headTop = headY + 2 * scale
-    local itemX = drawX + (scaleX < 0 and -width or 0) + width / 2 - image:getWidth() * itemScale / 2
-    local itemY = headTop - image:getHeight() * itemScale - 6 + bob
+    local itemScale = snapScale(math.min(scale, 16 * scale / math.max(image:getWidth(), image:getHeight())))
+    local bob = math.sin(love.timer.getTime() * 5) * (scale)
+    local headTop = headY + 2 * scale -- head art starts on row 2 of its cell
+    local itemX = centerX - image:getWidth() * itemScale / 2
+    local itemY = headTop - image:getHeight() * itemScale - 3 * scale + bob
     love.graphics.draw(image, snap(itemX), snap(itemY), 0, itemScale, itemScale)
   end
 

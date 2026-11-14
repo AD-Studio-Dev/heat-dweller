@@ -1894,11 +1894,7 @@ function View.remoteSwing(directionX, directionY)
     return false
   end
 
-  if math.abs(directionX) > math.abs(directionY) then
-    player.facing = directionX < 0 and 'left' or 'right'
-  else
-    player.facing = directionY < 0 and 'up' or 'down'
-  end
+  player:aimHead(directionX, directionY)
   return View.remote:swing(player, directionX, directionY)
 end
 

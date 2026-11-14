@@ -34,6 +34,10 @@ function Player.new(config)
 
     facing = 'down',
     walkFacing = 'down',
+    walkSideways = false, -- true only for pure left/right movement
+    headDirection = nil,  -- which way the head looks; nil = follow facing (old saves)
+    shootHeadTimer = 0,   -- >0 while shooting, so aim overrides movement for the head
+    shootHeadHold = config.shootHeadHold or 0.3,
     moving = false,
     velocityX = 0,
     velocityY = 0,
@@ -234,7 +238,9 @@ end
 function Player:update(dt, input, world)
   local wasMoving = self.moving
   local previousWalkFacing = self.walkFacing
+  local previousWalkSideways = self.walkSideways
   self.damageInvulnerabilityTimer = math.max(0, self.damageInvulnerabilityTimer - dt)
+  self.shootHeadTimer = math.max(0, self.shootHeadTimer - dt)
   if self.isHurt then
     self.hurtAnimationTime = self.hurtAnimationTime + dt
     if self.hurtAnimationTime >= self.hurtDuration then
@@ -309,8 +315,22 @@ function Player:update(dt, input, world)
     end
     self.facing = movementFacing
     self.walkFacing = movementFacing
+    -- Diagonals (horizontal and vertical input together) use the forward walk;
+    -- walk_right is reserved for pure horizontal movement.
+    self.walkSideways = directionX ~= 0 and directionY == 0
 
-    if not wasMoving or self.walkFacing ~= previousWalkFacing then
+    -- Not shooting: the head follows movement. Diagonals face front (south) or
+    -- back (north); the side view is only for pure west/east movement.
+    if self.shootHeadTimer <= 0 then
+      if directionY == 0 then
+        self.headDirection = movementFacing
+      else
+        self.headDirection = directionY < 0 and 'up' or 'down'
+      end
+    end
+
+    if not wasMoving or self.walkFacing ~= previousWalkFacing
+        or self.walkSideways ~= previousWalkSideways then
       self.animationTime = 0
     end
     self.animationTime = self.animationTime + dt
@@ -348,6 +368,23 @@ function Player:getAttackSpeed()
   return 1 / self:getShotCooldown()
 end
 
+-- Shooting (sweat or Remote swing) turns the body facing and the head toward
+-- the aim, and keeps the head there while attacks keep coming.
+function Player:aimHead(directionX, directionY)
+  if math.abs(directionX) > math.abs(directionY) then
+    self.facing = directionX < 0 and 'left' or 'right'
+  else
+    self.facing = directionY < 0 and 'up' or 'down'
+  end
+  self.headDirection = self.facing
+  self.shootHeadTimer = self.shootHeadHold
+end
+
+-- The head side view is mirrored only when looking left.
+function Player:isHeadMirrored()
+  return (self.headDirection or self.facing) == 'left'
+end
+
 function Player:shootSweat(directionX, directionY)
   if type(directionX) == 'string' then
     local directions = {
@@ -370,11 +407,7 @@ function Player:shootSweat(directionX, directionY)
   local directionLength = math.sqrt(directionX * directionX + directionY * directionY)
   directionX = directionX / directionLength
   directionY = directionY / directionLength
-  if math.abs(directionX) > math.abs(directionY) then
-    self.facing = directionX < 0 and 'left' or 'right'
-  else
-    self.facing = directionY < 0 and 'up' or 'down'
-  end
+  self:aimHead(directionX, directionY)
 
   if self.sweatShotCooldown > 0 or self.stats.health <= 0 or not self.onShootSweat then
     return false
@@ -436,8 +469,7 @@ function Player:getBodyFrame()
     return self.pickupTime < self.pickupBounceDuration and 'pickup_1' or 'pickup_2'
   end
 
-  local walkFacing = self.walkFacing or self.facing
-  local sideways = walkFacing == 'left' or walkFacing == 'right'
+  local sideways = self.walkSideways == true
   local prefix = sideways and 'walk_right_' or 'walk_forward_'
 
   -- Hurt and dead bodies stand still; only the head changes (hurt_head / death_head).
@@ -463,10 +495,11 @@ function Player:getHeadFrame()
     return 'hurt_head'
   end
 
+  local direction = self.headDirection or self.facing
   local frame = 'head_forward'
-  if self.facing == 'up' then
+  if direction == 'up' then
     frame = 'head_back'
-  elseif self.facing == 'left' or self.facing == 'right' then
+  elseif direction == 'left' or direction == 'right' then
     frame = 'head_right' -- the renderer mirrors it for 'left'
   end
 
