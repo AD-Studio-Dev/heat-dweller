@@ -367,7 +367,9 @@ function Rooms.solidRects(layout)
   return solids
 end
 
-function Rooms.generate(maxRooms, floorType, seed, floorIndex)
+-- `excludedBosses` (optional set, e.g. { crawler = true }) lists bosses already used earlier
+-- in this run; the boss pool skips them so a boss never repeats within one run.
+function Rooms.generate(maxRooms, floorType, seed, floorIndex, excludedBosses)
   maxRooms = math.max(3, math.min(maxRooms or 15, 20))
   floorType = floorType or 'basement'
   assert(floorNames[floorType], 'Unsupported floor type: ' .. tostring(floorType))
@@ -452,13 +454,22 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
 
   local bossTypes
   if floorType == 'basement' or floorType == 'living_room' then
-    bossTypes = { 'crawler', 'lilsnake' }
+    bossTypes = { 'crawler', 'lilsnake', 'sogface' }
   elseif floorType == 'bedroom' then
     bossTypes = { 'stuffing' }
   else
     bossTypes = { 'geometric' }
   end
-  bossRoom.bossType = bossTypes[random(1, #bossTypes)]
+  local bossPool = {}
+  for _, candidate in ipairs(bossTypes) do
+    if not (excludedBosses and excludedBosses[candidate]) then
+      bossPool[#bossPool + 1] = candidate
+    end
+  end
+  if #bossPool == 0 then -- everything already used (small pool): allow a repeat
+    bossPool = bossTypes
+  end
+  bossRoom.bossType = bossPool[random(1, #bossPool)]
   limitBoxDensity(bossRoom.layout, floorType, BOSS_ROOM_MAX_BOX_TILES)
   bossRoom.roomType = 'boss'
   local bossNames = {
@@ -466,6 +477,7 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex)
     lilsnake = "Lil' Snake Den",
     geometric = 'Geometric Core',
     stuffing = 'The Stuffing',
+    sogface = 'Sogface Lair',
   }
   bossRoom.name = bossNames[bossRoom.bossType]
   bossRoom.boss = true

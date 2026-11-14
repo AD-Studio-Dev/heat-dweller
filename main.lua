@@ -162,6 +162,7 @@ local debugBosses = {
   { name = "Lil' Snake", type = 'lilsnake', floorIndex = 2 },
   { name = 'The Geometric', type = 'geometric', floorIndex = 3 },
   { name = 'The Stuffing', type = 'stuffing', floorIndex = 4 },
+  { name = 'Sogface', type = 'sogface', floorIndex = 1 },
 }
 local characters = {
   {
@@ -960,6 +961,8 @@ local function resetPlayerRunState()
   lilSnake = nil
   geometric = nil
   stuffing = nil
+  View.sogface = nil
+  View.runBosses = nil
   babyWidow = nil
   acidProjectiles = {}
   activeFireZones = {}
@@ -1281,6 +1284,7 @@ function love.load()
   lilSnake = nil
   geometric = nil
   stuffing = nil
+  View.sogface = nil
   babyWidow = nil
   acidProjectiles = {}
   screenShakeTime = 0
@@ -1494,6 +1498,10 @@ saveRun = function()
     lilSnake = saveEntity(lilSnake, snakeFields),
     geometric = saveEntity(geometric, geometricFields),
     stuffing = saveEntity(stuffing, stuffingFields),
+    sogface = saveEntity(View.sogface, {
+      'x', 'y', 'health', 'maxHealth', 'alive', 'vx', 'vy', 'state', 'stateTimer',
+      'stateDuration', 'animationTime', 'attackCount', 'contactCooldown',
+    }),
     lilSnakeTrail = lilSnake and copySaveData(lilSnake.trail) or nil,
     babyWidow = saveEntity(babyWidow, minionFields),
     acidProjectiles = {},
@@ -1558,6 +1566,7 @@ continueRun = function()
   end
 
   runSeed = snapshot.seed
+  View.runBosses = nil -- re-learned from the floor we leave (see loadFloor)
   local savedFloorIndex = snapshot.world.floorIndex or 1
   if type(savedFloorIndex) ~= 'number' or savedFloorIndex % 1 ~= 0
       or not floorTypeForIndex(savedFloorIndex) then
@@ -1643,6 +1652,7 @@ continueRun = function()
   restoreEntity(lilSnake, snapshot.lilSnake)
   restoreEntity(geometric, snapshot.geometric)
   restoreEntity(stuffing, snapshot.stuffing)
+  restoreEntity(View.sogface, snapshot.sogface)
   if geometric then
     geometric:restoreRuntimeState()
     geometric.onScreenShake = function(strength)
@@ -1739,7 +1749,7 @@ continueRun = function()
     end
     startBasementMusic()
   end
-  renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing, 0)
+  renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing or View.sogface, 0)
   mainMenu.hasSave = true
   mainMenu.message = nil
   return true
@@ -1757,7 +1767,7 @@ local function updateSweatCombat(dt, targets)
     player:getDamage()
   )
   for _, target in ipairs(defeated) do
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -1864,7 +1874,7 @@ end
 
 -- Same kill rewards as sweat shots and fire foam.
 function View.awardDefeat(target)
-  if target == crawler or target == lilSnake or target == geometric or target == stuffing then
+  if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
     player.stats.dollars = player.stats.dollars + 8
   elseif target == babyWidow then
     player.stats.dollars = player.stats.dollars + 3
@@ -2288,6 +2298,9 @@ function love.update(dt)
   if stuffing then
     foamTargets[#foamTargets + 1] = stuffing
   end
+  if View.sogface then
+    foamTargets[#foamTargets + 1] = View.sogface
+  end
   if babyWidow then
     foamTargets[#foamTargets + 1] = babyWidow
   end
@@ -2304,7 +2317,7 @@ function love.update(dt)
     currentRoom and currentRoom.layout.walls or {}
   )
   for _, defeated in ipairs(foamDeaths) do
-    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing then
+    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing or defeated == View.sogface then
       player.stats.dollars = player.stats.dollars + 8
     elseif defeated == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -2325,6 +2338,9 @@ function love.update(dt)
   end
   if stuffing then
     stuffing:update(dt, player, world.solidObstacles)
+  end
+  if View.sogface then
+    View.sogface:update(dt, player, world.solidObstacles)
   end
   if babyWidow then
     local spiderCount = babyWidow:update(dt, player)
@@ -2387,7 +2403,7 @@ function love.update(dt)
     View.awardDefeat(target)
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
   if currentRoom and currentRoom.boss then
     renderer:updateBossHealth(activeBoss, dt)
   else
@@ -2471,6 +2487,7 @@ local function getLivingRoomTargets()
     end
   end
   if stuffing and stuffing.alive then targets[#targets + 1] = stuffing end
+  if View.sogface and View.sogface.alive then targets[#targets + 1] = View.sogface end
   if babyWidow and babyWidow.alive then targets[#targets + 1] = babyWidow end
   return targets
 end
@@ -2485,7 +2502,7 @@ local function damageTarget(target, amount)
       if target == babyWidow and target.onDeath then
         target.onDeath()
       end
-      if target == crawler or target == lilSnake or target == geometric or target == stuffing then
+      if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
         player.stats.dollars = player.stats.dollars + 8
       elseif target == babyWidow then
         player.stats.dollars = player.stats.dollars + 3
@@ -2504,7 +2521,7 @@ local function damageTarget(target, amount)
     if target == babyWidow and target.onDeath then
       target.onDeath()
     end
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -2756,6 +2773,9 @@ local function captureGameplayPauseFrame()
   if lilSnake then
     lilSnake:draw(world.camera)
   end
+  if View.sogface then
+    View.sogface:draw(world.camera)
+  end
   renderer:drawPlayer(player, world.camera)
   View.drawRemoteLayer(world.camera)
   renderer:drawFireFoam(player, world.camera, fireFoam.beam)
@@ -2766,7 +2786,7 @@ local function captureGameplayPauseFrame()
   renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
   drawCultistChoiceOverlay()
   if currentRoom and currentRoom.boss then
-    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing)
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface)
   end
   if pickupNotification then
     renderer:drawPickupNotification(pickupNotification, pickupNotificationElapsed, pickupNotificationDuration)
@@ -2820,6 +2840,9 @@ function drawGameplayScene(shakeX, shakeY)
   renderer:drawBabyWidow(babyWidow, world.camera)
   if lilSnake then
     lilSnake:draw(world.camera)
+  end
+  if View.sogface then
+    View.sogface:draw(world.camera)
   end
   renderer:drawPlayer(player, world.camera)
   View.drawRemoteLayer(world.camera)
@@ -3010,7 +3033,7 @@ View.drawFrame = function()
   renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
   drawCultistChoiceOverlay()
   if currentRoom and currentRoom.boss then
-    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing)
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface)
   end
   if pickupNotification then
     renderer:drawPickupNotification(
@@ -3884,6 +3907,8 @@ function updateBossDeathSequence(dt, boss)
         geometric = nil
       elseif stuffing == boss then
         stuffing = nil
+      elseif View.sogface == boss then
+        View.sogface = nil
       end
       startFloorMusic()
     end
@@ -3905,7 +3930,7 @@ function areAllRoomEnemiesDefeated()
   end
 
   -- A boss variable stays set while it is alive and during its death sequence.
-  if crawler or lilSnake or geometric or stuffing then
+  if crawler or lilSnake or geometric or stuffing or View.sogface then
     return false
   end
   return not babyWidow or not babyWidow.alive
@@ -3913,7 +3938,7 @@ end
 
 -- True while a boss is alive or still playing its death sequence.
 function bossBattleOngoing()
-  return (crawler or lilSnake or geometric or stuffing) ~= nil
+  return (crawler or lilSnake or geometric or stuffing or View.sogface) ~= nil
 end
 
 local function attachGeometricFeedback(boss)
@@ -3928,6 +3953,7 @@ function spawnRoomEnemies(room)
   lilSnake = nil
   geometric = nil
   stuffing = nil
+  View.sogface = nil
   babyWidow = nil
 
   if room.cleared then
@@ -3965,6 +3991,11 @@ function spawnRoomEnemies(room)
       attachGeometricFeedback(geometric)
     elseif definition.type == 'stuffing' then
       stuffing = TheStuffing.new(world)
+    elseif definition.type == 'sogface' then
+      View.sogface = require('sogface').new(world)
+      View.sogface.onScreenShake = function(strength)
+        triggerScreenShake(strength)
+      end
     elseif definition.type == 'breathless' then
       enemy = Breathless.new(definition)
     elseif definition.type == 'panicker' then
@@ -4255,6 +4286,7 @@ function startGame(debugBossType)
     world.roomType = world.floorType
   end
   runSeed = love.math.random(1, 2147483646) -- fresh seed every run (never a constant)
+  View.runBosses = nil
   math.randomseed(runSeed)
   if selectedCharacter.spriteSheetPath then
     renderer:setCharacter(selectedCharacter.spriteSheetPath)
@@ -4690,7 +4722,7 @@ function resumeGameAudio()
     end
 
     local bossEncounterActive = currentRoom and currentRoom.boss and not currentRoom.cleared
-    local bossBattleActive = bossEncounterActive or (currentRoom and currentRoom.boss and (crawler or lilSnake or geometric or stuffing))
+    local bossBattleActive = bossEncounterActive or (currentRoom and currentRoom.boss and (crawler or lilSnake or geometric or stuffing or View.sogface))
     if bossBattleActive or gameState == 'boss_intro' then
       if skyMusic then
         skyMusic:stop()
@@ -4712,7 +4744,7 @@ function resumePausedAudio()
     return
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
   if currentRoom and currentRoom.boss and activeBoss and activeBoss.alive then
     restoreBossMusicVolumes()
     if bossMusicPhase == 'active_start' then
@@ -4796,7 +4828,15 @@ loadFloor = function(floorIndex)
   currentFloorDisplayName = getFloorDisplayName(nextFloorType)
   currentFloorBannerTimer = 3
   bossDefeated = false
-  rooms = Rooms.generate(15, nextFloorType, runSeed + floorIndex, floorIndex)
+  -- A boss fought on an earlier floor never comes back this run. The floor being left
+  -- is still in `rooms`, so this also works after Continue (nothing else is saved).
+  View.runBosses = View.runBosses or {}
+  for _, previousRoom in ipairs(rooms or {}) do
+    if previousRoom.boss and previousRoom.bossType then
+      View.runBosses[previousRoom.bossType] = true
+    end
+  end
+  rooms = Rooms.generate(15, nextFloorType, runSeed + floorIndex, floorIndex, View.runBosses)
   roomIndex = 1
   currentRoom = nil
   exploredRooms = {}
@@ -4805,6 +4845,7 @@ loadFloor = function(floorIndex)
   crawler = nil
   lilSnake = nil
   geometric = nil
+  View.sogface = nil
   babyWidow = nil
   acidProjectiles = {}
   ladder = nil
@@ -4944,7 +4985,7 @@ function drawSpecialRoomContents()
     end
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
   if activeBoss and activeBoss.deathSequence then
     local progress = 1 - activeBoss.deathSequence.timer / activeBoss.deathSequence.duration
     local radius = 18 + progress * 110

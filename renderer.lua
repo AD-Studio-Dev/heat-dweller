@@ -305,7 +305,8 @@ function Renderer:drawBossHealthBar(boss)
   local x = panelX + nameWidth + 8
   local height = 18
   local y = love.graphics.getHeight() - 56
-  local label = boss.kind == 'lilsnake' and "LIL' SNAKE"
+  local label = boss.kind == 'sogface' and 'SOGFACE'
+    or boss.kind == 'lilsnake' and "LIL' SNAKE"
     or boss.kind == 'geometric' and 'THE GEOMETRIC'
     or boss.kind == 'stuffing' and 'THE STUFFING' or 'THE CRAWLER'
 
@@ -324,7 +325,8 @@ function Renderer:drawBossHealthBar(boss)
   love.graphics.rectangle('fill', x, y, barWidth * healthRatio, height, 2, 2)
   local portrait = boss.kind == 'geometric' and self.geometricPortrait
     or boss.kind == 'lilsnake' and self.lilSnakePortrait
-    or boss.kind == 'stuffing' and self.stuffingPortrait or self.crawlerPortrait
+    or boss.kind == 'stuffing' and self.stuffingPortrait
+    or boss.kind == 'sogface' and require('sogface').getPortrait() or self.crawlerPortrait
   local portraitX = panelX + width - iconSize
   local portraitY = y + (height - iconSize) / 2
   love.graphics.setColor(1, 1, 1, 1)
@@ -1025,6 +1027,15 @@ function Renderer:drawBossIntro(bossType, progress)
       4,
       4
     )
+  elseif bossType == 'sogface' then
+    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
+    love.graphics.setFont(self.bigFont)
+    love.graphics.printf('SOGFACE', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
+    local sogfacePortrait = require('sogface').getPortrait()
+    if sogfacePortrait then
+      love.graphics.setColor(1, 1, 1, alpha)
+      love.graphics.draw(sogfacePortrait, math.floor(bossPortraitX), math.floor(centerY - 96), 0, 2, 2)
+    end
   elseif bossType == 'stuffing' then
     love.graphics.setColor(0.98, 0.83, 0.58, alpha)
     love.graphics.setFont(self.bigFont)
