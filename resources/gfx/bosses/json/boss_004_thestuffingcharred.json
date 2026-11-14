@@ -43,7 +43,7 @@
  "meta": {
   "app": "https://github.com/LibreSprite/LibreSprite/",
   "version": "1.1-dev",
-  "image": "C:\\Users\\AhmedI\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\spritesheets\\boss_004_thestuffingcharred.png",
+  "image": "C:\\Users\\AhmedI\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\spritesheets\\thestuffingcharred.png",
   "format": "RGBA8888",
   "size": { "w": 320, "h": 64 },
   "scale": "1",

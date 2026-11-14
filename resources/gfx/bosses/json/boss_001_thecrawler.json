@@ -35,7 +35,7 @@
  "meta": {
   "app": "https://github.com/LibreSprite/LibreSprite/",
   "version": "1.1-dev",
-  "image": "C:\\Users\\Ahmed\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\offical\\thecrawlerspritesheet.png",
+  "image": "C:\\Users\\Ahmed\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\spritesheets\\thecrawler.png",
   "format": "RGBA8888",
   "size": { "w": 384, "h": 96 },
   "scale": "1",

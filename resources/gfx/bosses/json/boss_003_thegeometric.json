@@ -51,7 +51,7 @@
  "meta": {
   "app": "https://github.com/LibreSprite/LibreSprite/",
   "version": "1.1-dev",
-  "image": "C:\\Users\\AhmedI\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\spritesheets\\boss_003_thegeometric.png",
+  "image": "C:\\Users\\AhmedI\\Documents\\GitHub\\heat-dweller\\resources\\gfx\\bosses\\spritesheets\\thegeometric.png",
   "format": "RGBA8888",
   "size": { "w": 384, "h": 64 },
   "scale": "1",
