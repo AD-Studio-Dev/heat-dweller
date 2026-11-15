@@ -11,7 +11,7 @@ AggressiveFly.__index = AggressiveFly
 setmetatable(AggressiveFly, { __index = Fly }) -- everything not overridden comes from Fly
 
 -- Sprite sheet: 128 x 64, 32 x 32 cells. Change SHEET_PATH if your file is named differently.
-local SHEET_PATH = 'resources/gfx/enemies/spritesheets/enemies_011_aggressivefly.png'
+local SHEET_PATH = 'resources/gfx/monsters/aggressivefly.png'
 local SHEET_W, SHEET_H = 128, 64
 local CELL = 32
 local FRAME_COUNT = 6 -- 4 on the top row, 2 on the bottom

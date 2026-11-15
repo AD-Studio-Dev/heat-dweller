@@ -455,8 +455,10 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex, excludedBosses)
   local bossTypes
   if floorType == 'basement' or floorType == 'living_room' then
     bossTypes = { 'crawler', 'lilsnake', 'sogface' }
+  elseif floorType == 'kitchen' then
+    bossTypes = { 'geometric', 'big_broach' }
   elseif floorType == 'bedroom' then
-    bossTypes = { 'stuffing' }
+    bossTypes = { 'stuffing', 'big_broach' }
   else
     bossTypes = { 'geometric' }
   end
@@ -478,6 +480,7 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex, excludedBosses)
     geometric = 'Geometric Core',
     stuffing = 'The Stuffing',
     sogface = 'Sogface Lair',
+    big_broach = 'Big Broach Nest',
   }
   bossRoom.name = bossNames[bossRoom.bossType]
   bossRoom.boss = true

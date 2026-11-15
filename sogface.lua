@@ -1,7 +1,7 @@
 -- Sogface: a floating boss that bounces diagonally around the room, then puffs
 -- its cheeks and spits a burst of water.
 --
--- Sprite sheet: resources/gfx/bosses/spritesheets/sogface.png, a horizontal strip
+-- Sprite sheet: resources/gfx/bosses/sogface.png, a horizontal strip
 -- of six equal frames (frameW = width / 6, frameH = height), nearest filtering:
 --   1 idle squished (wide grin)      2 idle stretched (tall grin)
 --   3 puffed-cheek wind-up           4 small "O" transition
@@ -13,7 +13,7 @@
 local Sogface = {}
 Sogface.__index = Sogface
 
-Sogface.SHEET_PATH = 'resources/gfx/bosses/spritesheets/sogface.png'
+Sogface.SHEET_PATH = 'resources/gfx/bosses/sogface.png'
 
 local FRAME_COUNT = 6
 local FRAME_IDLE_WIDE, FRAME_IDLE_TALL = 1, 2

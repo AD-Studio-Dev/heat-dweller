@@ -6,7 +6,7 @@ local Wet = require('wet')
 local Linked = {}
 Linked.__index = Linked
 
-local SHEET_PATH = 'resources/gfx/enemies/spritesheets/enemies_007_linked.png'
+local SHEET_PATH = 'resources/gfx/monsters/linked.png'
 local SHEET_W, SHEET_H = 256, 128
 local CELL_W, CELL_H = 64, 32
 local COLUMNS = 4

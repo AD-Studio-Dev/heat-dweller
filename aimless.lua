@@ -6,7 +6,7 @@ local Wet = require('wet')
 local Aimless = {}
 Aimless.__index = Aimless
 
-local SHEET_PATH = 'resources/gfx/enemies/spritesheets/enemies_006_aimless.png'
+local SHEET_PATH = 'resources/gfx/monsters/aimless.png'
 local SHEET_W, SHEET_H = 256, 128
 local CELL = 32
 local SPRITE_SCALE = 2

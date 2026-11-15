@@ -6,11 +6,11 @@
 local Breathless = {}
 Breathless.__index = Breathless
 
--- Same 256 x 128 layout for every variant (see enemies_008-0010.json).
+-- Same 256 x 128 layout for every variant
 local SHEET_PATHS = {
-  breathless = 'resources/gfx/enemies/spritesheets/enemies_008_breathless.png',
-  panicker = 'resources/gfx/enemies/spritesheets/enemies_009_panicker.png',
-  puffer = 'resources/gfx/enemies/spritesheets/enemies_010_puffer.png',
+  breathless = 'resources/gfx/monsters/breathless.png',
+  panicker = 'resources/gfx/monsters/panicker.png',
+  puffer = 'resources/gfx/monsters/puffer.png',
 }
 local SHEET_W, SHEET_H = 256, 128
 local CELL = 32

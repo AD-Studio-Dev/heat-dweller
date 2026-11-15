@@ -106,17 +106,17 @@ local REMOTE_REST = { -- hand offset from Matthew's centre and resting tilt, per
 function Renderer.new(atlas)
   LilSnake.load()
   local renderer = setmetatable({ atlas = atlas }, Renderer)
-  renderer.enemyImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_002_scar.png')
-  renderer.spiderImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/entity_001_spider.png')
-  renderer.centipedeImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/enemies_004_centipede.png')
-  renderer.stationaryAngelImage = love.graphics.newImage('resources/gfx/enemies/spritesheets/enemies_005_stationaryangel.png')
+  renderer.enemyImage = love.graphics.newImage('resources/gfx/monsters/scar.png')
+  renderer.spiderImage = love.graphics.newImage('resources/gfx/monsters/spider.png')
+  renderer.centipedeImage = love.graphics.newImage('resources/gfx/monsters/centipede.png')
+  renderer.stationaryAngelImage = love.graphics.newImage('resources/gfx/monsters/stationaryangel.png')
   renderer.stationaryAngelImage:setFilter('nearest', 'nearest')
   renderer.divineBeamImage = love.graphics.newImage('resources/sprites/attack/divinebeam_attack.png')
   renderer.divineBeamImage:setFilter('nearest', 'nearest')
-  renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/thecrawler.png')
-  renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/thegeometric.png')
-  renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/thestuffing.png')
-  renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/spritesheets/thestuffingcharred.png')
+  renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/thecrawler.png')
+  renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/thegeometric.png')
+  renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/thestuffing.png')
+  renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/thestuffingcharred.png')
   renderer.geometricPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thegeometric_portrait.png')
   renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thestuffing_portrait.png')
   renderer.acidImage = love.graphics.newImage('resources/sprites/attack/acid_attack.png')
@@ -305,7 +305,8 @@ function Renderer:drawBossHealthBar(boss)
   local x = panelX + nameWidth + 8
   local height = 18
   local y = love.graphics.getHeight() - 56
-  local label = boss.kind == 'sogface' and 'SOGFACE'
+  local label = boss.kind == 'big_broach' and 'BIG BROACH'
+    or boss.kind == 'sogface' and 'SOGFACE'
     or boss.kind == 'lilsnake' and "LIL' SNAKE"
     or boss.kind == 'geometric' and 'THE GEOMETRIC'
     or boss.kind == 'stuffing' and 'THE STUFFING' or 'THE CRAWLER'
@@ -326,7 +327,8 @@ function Renderer:drawBossHealthBar(boss)
   local portrait = boss.kind == 'geometric' and self.geometricPortrait
     or boss.kind == 'lilsnake' and self.lilSnakePortrait
     or boss.kind == 'stuffing' and self.stuffingPortrait
-    or boss.kind == 'sogface' and require('sogface').getPortrait() or self.crawlerPortrait
+    or boss.kind == 'sogface' and require('sogface').getPortrait()
+    or boss.kind == 'big_broach' and require('big_broach').getPortrait() or self.crawlerPortrait
   local portraitX = panelX + width - iconSize
   local portraitY = y + (height - iconSize) / 2
   love.graphics.setColor(1, 1, 1, 1)
@@ -1027,6 +1029,15 @@ function Renderer:drawBossIntro(bossType, progress)
       4,
       4
     )
+  elseif bossType == 'big_broach' then
+    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
+    love.graphics.setFont(self.bigFont)
+    love.graphics.printf('BIG BROACH', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
+    local broachPortrait = require('big_broach').getPortrait()
+    if broachPortrait then
+      love.graphics.setColor(1, 1, 1, alpha)
+      love.graphics.draw(broachPortrait, math.floor(bossPortraitX), math.floor(centerY - 96), 0, 2, 2)
+    end
   elseif bossType == 'sogface' then
     love.graphics.setColor(0.98, 0.83, 0.58, alpha)
     love.graphics.setFont(self.bigFont)

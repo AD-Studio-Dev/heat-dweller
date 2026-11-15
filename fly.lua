@@ -3,7 +3,7 @@ local Fly = {}
 Fly.__index = Fly
 local Wet = require('wet')
 
-Fly.imagePath = 'resources/gfx/enemies/spritesheets/enemies_003_fly.png'
+Fly.imagePath = 'resources/gfx/monsters/fly.png'
 Fly.frames = {
   appear = {
     { x = 0, y = 0, w = 32, h = 32, duration = 0.1 },

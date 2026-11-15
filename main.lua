@@ -163,6 +163,7 @@ local debugBosses = {
   { name = 'The Geometric', type = 'geometric', floorIndex = 3 },
   { name = 'The Stuffing', type = 'stuffing', floorIndex = 4 },
   { name = 'Sogface', type = 'sogface', floorIndex = 1 },
+  { name = 'Big Broach', type = 'big_broach', floorIndex = 3 },
 }
 local characters = {
   {
@@ -962,6 +963,7 @@ local function resetPlayerRunState()
   geometric = nil
   stuffing = nil
   View.sogface = nil
+  View.big_broach = nil
   View.runBosses = nil
   babyWidow = nil
   acidProjectiles = {}
@@ -1062,10 +1064,10 @@ end
 
 local function initializeAudio()
   matthewHurtSounds = {
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt1.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt2.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt3.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/music/sfx/matthewhurt4.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt1.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt2.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt3.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt4.wav', 'static')),
   }
   -- Optional sfx: a missing file just means no sound instead of a crash.
   local function loadOptionalSfx(path)
@@ -1080,9 +1082,9 @@ local function initializeAudio()
     end
     return registerSfxSource(source)
   end
-  extraSfx.deathSound = loadOptionalSfx('resources/music/sfx/deathsound.wav')
-  extraSfx.startRun = loadOptionalSfx('resources/music/sfx/startrun.wav')
-  local sweatSource = loadOptionalSfx('resources/music/sfx/sweatsfx.wav')
+  extraSfx.deathSound = loadOptionalSfx('resources/sfx/deathsound.wav')
+  extraSfx.startRun = loadOptionalSfx('resources/sfx/startrun.wav')
+  local sweatSource = loadOptionalSfx('resources/sfx/sweatsfx.wav')
   extraSfx.sweatSounds, extraSfx.sweatIndex = nil, 0
   if sweatSource then
     -- A few copies taken in turn so fast shots overlap instead of cutting off.
@@ -1093,55 +1095,52 @@ local function initializeAudio()
     extraSfx.sweatSounds = pool
   end
   babyWidowSounds = {
-    enter = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow enter stage.wav', 'static')),
-    summon = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow summon.wav', 'static')),
+    enter = registerSfxSource(love.audio.newSource('resources/sfx/baby widow enter stage.wav', 'static')),
+    summon = registerSfxSource(love.audio.newSource('resources/sfx/baby widow summon.wav', 'static')),
     -- TODO: Use inhale/throwup for a defined Baby Widow attack telegraph/release.
-    inhale = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow inhale.wav', 'static')),
-    throwup = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow throwup.wav', 'static')),
-    coughing = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow coughing.wav', 'static')),
-    death = registerSfxSource(love.audio.newSource('resources/music/sfx/baby widow death.wav', 'static')),
+    inhale = registerSfxSource(love.audio.newSource('resources/sfx/baby widow inhale.wav', 'static')),
+    throwup = registerSfxSource(love.audio.newSource('resources/sfx/baby widow throwup.wav', 'static')),
+    coughing = registerSfxSource(love.audio.newSource('resources/sfx/baby widow coughing.wav', 'static')),
+    death = registerSfxSource(love.audio.newSource('resources/sfx/baby widow death.wav', 'static')),
   }
-  local musicPath = 'resources/music/music/backgroundmusic.ogg'
+  local musicPath = 'resources/music/backgroundmusic.ogg'
   if not love.filesystem.getInfo(musicPath) then
-    musicPath = 'resources/music/music/resources_music_music_song(2).ogg'
+    musicPath = 'resources/music/resources_music_music_song(2).ogg'
   end
   backgroundMusic = love.audio.newSource(musicPath, 'stream')
   backgroundMusic:setLooping(true)
   setFloorMusicVolume()
   backgroundMusic:play()
   backgroundMusic:pause()
-  menuMusic = love.audio.newSource('resources/music/music/mainmenumusic.ogg', 'stream')
+  menuMusic = love.audio.newSource('resources/music/mainmenumusic.ogg', 'stream')
   menuMusic:setLooping(true)
   menuMusic:setVolume(0)
   menuMusic:stop()
   menuMusicActive = false
-  basementOscMusic = love.audio.newSource('resources/music/music/basement/basementsong.ogg', 'stream')
+  basementOscMusic = love.audio.newSource('resources/music/basement/basementsong.ogg', 'stream')
   basementOscMusic:setLooping(true)
   basementOscMusic:setVolume(0)
   basementOscMusic:stop()
-  kitchenMusic = love.audio.newSource('resources/music/music/kitchen/kitchensong.ogg', 'stream')
+  kitchenMusic = love.audio.newSource('resources/music/kitchen/kitchensong.ogg', 'stream')
   kitchenMusic:setLooping(true)
   kitchenMusic:setVolume(0)
   kitchenMusic:stop()
-  skyMusic = love.audio.newSource('resources/music/music/thesky/theskysong.ogg', 'stream')
+  skyMusic = love.audio.newSource('resources/music/thesky/theskysong.ogg', 'stream')
   skyMusic:setLooping(true)
   skyMusic:setVolume(0)
   skyMusic:stop()
-  bossIntroMusic = love.audio.newSource('resources/music/music/bossfightstart.ogg', 'stream')
+  bossIntroMusic = love.audio.newSource('resources/music/bossfightstart.ogg', 'stream')
   bossIntroMusic:setLooping(false)
   bossIntroMusic:setVolume(audioMusicVolume)
-  bossActiveStartMusic = love.audio.newSource('resources/music/music/bossfightactivestart.ogg', 'stream')
+  bossActiveStartMusic = love.audio.newSource('resources/music/bossfightactivestart.ogg', 'stream')
   bossActiveStartMusic:setLooping(false)
   bossActiveStartMusic:setVolume(audioMusicVolume)
-  bossLoopMusic = love.audio.newSource('resources/music/music/bossfightactiveloop.ogg', 'stream')
+  bossLoopMusic = love.audio.newSource('resources/music/bossfightactiveloop.ogg', 'stream')
   bossLoopMusic:setLooping(true)
   bossLoopMusic:setVolume(audioMusicVolume)
   bossDefeatSound = nil
   local bossDefeatPaths = {
-    'resources/music/sfx/beatbosswin.wav',
-    'resources/music/music/beatbosswin.wav',
-    'resources/music/sfx/beatbosswin.ogg',
-    'resources/music/music/beatbosswin.ogg',
+    'resources/sfx/bossbeatwin.wav',
   }
   for _, bossDefeatPath in ipairs(bossDefeatPaths) do
     if love.filesystem.getInfo(bossDefeatPath) then
@@ -1159,8 +1158,8 @@ local function initializeAudio()
     bossDefeatSound = createBossDefeatTone()
   end
   local floorTransitionPaths = {
-    'resources/music/music/floor transition.wav',
-    'resources/music/sfx/floor transition.wav',
+    'resources/sfx/floor transition.wav',
+    'resources/sfx/floor transition.wav',
   }
   for _, floorTransitionPath in ipairs(floorTransitionPaths) do
     if love.filesystem.getInfo(floorTransitionPath) then
@@ -1285,6 +1284,7 @@ function love.load()
   geometric = nil
   stuffing = nil
   View.sogface = nil
+  View.big_broach = nil
   babyWidow = nil
   acidProjectiles = {}
   screenShakeTime = 0
@@ -1502,6 +1502,11 @@ saveRun = function()
       'x', 'y', 'health', 'maxHealth', 'alive', 'vx', 'vy', 'state', 'stateTimer',
       'stateDuration', 'animationTime', 'attackCount', 'contactCooldown',
     }),
+    big_broach = saveEntity(View.big_broach, {
+      'x', 'y', 'health', 'maxHealth', 'alive', 'state', 'stateTimer', 'stateDuration',
+      'stateElapsed', 'animationTime', 'facing', 'targetX', 'targetY', 'dashDirX',
+      'dashDirY', 'dashSpeed', 'contactCooldown',
+    }),
     lilSnakeTrail = lilSnake and copySaveData(lilSnake.trail) or nil,
     babyWidow = saveEntity(babyWidow, minionFields),
     acidProjectiles = {},
@@ -1653,6 +1658,7 @@ continueRun = function()
   restoreEntity(geometric, snapshot.geometric)
   restoreEntity(stuffing, snapshot.stuffing)
   restoreEntity(View.sogface, snapshot.sogface)
+  restoreEntity(View.big_broach, snapshot.big_broach)
   if geometric then
     geometric:restoreRuntimeState()
     geometric.onScreenShake = function(strength)
@@ -1749,7 +1755,7 @@ continueRun = function()
     end
     startBasementMusic()
   end
-  renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing or View.sogface, 0)
+  renderer:updateBossHealth(crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach, 0)
   mainMenu.hasSave = true
   mainMenu.message = nil
   return true
@@ -1767,7 +1773,7 @@ local function updateSweatCombat(dt, targets)
     player:getDamage()
   )
   for _, target in ipairs(defeated) do
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -1874,7 +1880,7 @@ end
 
 -- Same kill rewards as sweat shots and fire foam.
 function View.awardDefeat(target)
-  if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
+  if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
     player.stats.dollars = player.stats.dollars + 8
   elseif target == babyWidow then
     player.stats.dollars = player.stats.dollars + 3
@@ -2006,7 +2012,7 @@ end
 -- Run-start transition (character select -> first room)
 --
 --   1. 'run_start' game state, "black" phase: everything is frozen and the screen
---      is solid black while resources/music/sfx/startrun.wav plays. No gameplay,
+--      is solid black while resources/sfx/startrun.wav plays. No gameplay,
 --      entity updates or room drawing, and all floor music is silent.
 --   2. When the sound ends, the state becomes 'playing' and the "fade" phase runs
 --      for RUN_FADE_DURATION seconds: the black overlay fades out over the room
@@ -2301,6 +2307,12 @@ function love.update(dt)
   if View.sogface then
     foamTargets[#foamTargets + 1] = View.sogface
   end
+  if View.big_broach then
+    foamTargets[#foamTargets + 1] = View.big_broach
+    for _, fly in ipairs(View.big_broach:getFlyTargets()) do
+      foamTargets[#foamTargets + 1] = fly
+    end
+  end
   if babyWidow then
     foamTargets[#foamTargets + 1] = babyWidow
   end
@@ -2317,7 +2329,7 @@ function love.update(dt)
     currentRoom and currentRoom.layout.walls or {}
   )
   for _, defeated in ipairs(foamDeaths) do
-    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing or defeated == View.sogface then
+    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing or defeated == View.sogface or defeated == View.big_broach then
       player.stats.dollars = player.stats.dollars + 8
     elseif defeated == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -2341,6 +2353,18 @@ function love.update(dt)
   end
   if View.sogface then
     View.sogface:update(dt, player, world.solidObstacles)
+  end
+  if View.big_broach then
+    -- Big Broach asks for real fly enemies (released shield flies, red chasers).
+    for _, spawn in ipairs(View.big_broach:update(dt, player, world.solidObstacles)) do
+      if #enemies < 14 then
+        if spawn.type == 'aggressivefly' then
+          table.insert(enemies, AggressiveFly:new(spawn.x, spawn.y))
+        else
+          table.insert(enemies, Fly:new(spawn.x, spawn.y))
+        end
+      end
+    end
   end
   if babyWidow then
     local spiderCount = babyWidow:update(dt, player)
@@ -2403,7 +2427,7 @@ function love.update(dt)
     View.awardDefeat(target)
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach
   if currentRoom and currentRoom.boss then
     renderer:updateBossHealth(activeBoss, dt)
   else
@@ -2488,6 +2512,12 @@ local function getLivingRoomTargets()
   end
   if stuffing and stuffing.alive then targets[#targets + 1] = stuffing end
   if View.sogface and View.sogface.alive then targets[#targets + 1] = View.sogface end
+  if View.big_broach and View.big_broach.alive then
+    targets[#targets + 1] = View.big_broach
+    for _, fly in ipairs(View.big_broach:getFlyTargets()) do
+      if fly.alive then targets[#targets + 1] = fly end
+    end
+  end
   if babyWidow and babyWidow.alive then targets[#targets + 1] = babyWidow end
   return targets
 end
@@ -2502,7 +2532,7 @@ local function damageTarget(target, amount)
       if target == babyWidow and target.onDeath then
         target.onDeath()
       end
-      if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
+      if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
         player.stats.dollars = player.stats.dollars + 8
       elseif target == babyWidow then
         player.stats.dollars = player.stats.dollars + 3
@@ -2521,7 +2551,7 @@ local function damageTarget(target, amount)
     if target == babyWidow and target.onDeath then
       target.onDeath()
     end
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface then
+    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
       player.stats.dollars = player.stats.dollars + 8
     elseif target == babyWidow then
       player.stats.dollars = player.stats.dollars + 3
@@ -2776,6 +2806,9 @@ local function captureGameplayPauseFrame()
   if View.sogface then
     View.sogface:draw(world.camera)
   end
+  if View.big_broach then
+    View.big_broach:draw(world.camera)
+  end
   renderer:drawPlayer(player, world.camera)
   View.drawRemoteLayer(world.camera)
   renderer:drawFireFoam(player, world.camera, fireFoam.beam)
@@ -2786,7 +2819,7 @@ local function captureGameplayPauseFrame()
   renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
   drawCultistChoiceOverlay()
   if currentRoom and currentRoom.boss then
-    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface)
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach)
   end
   if pickupNotification then
     renderer:drawPickupNotification(pickupNotification, pickupNotificationElapsed, pickupNotificationDuration)
@@ -2843,6 +2876,9 @@ function drawGameplayScene(shakeX, shakeY)
   end
   if View.sogface then
     View.sogface:draw(world.camera)
+  end
+  if View.big_broach then
+    View.big_broach:draw(world.camera)
   end
   renderer:drawPlayer(player, world.camera)
   View.drawRemoteLayer(world.camera)
@@ -3033,7 +3069,7 @@ View.drawFrame = function()
   renderer:drawMinimap(rooms, roomIndex, seenRooms, exploredRooms)
   drawCultistChoiceOverlay()
   if currentRoom and currentRoom.boss then
-    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface)
+    renderer:drawBossHealthBar(crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach)
   end
   if pickupNotification then
     renderer:drawPickupNotification(
@@ -3909,6 +3945,8 @@ function updateBossDeathSequence(dt, boss)
         stuffing = nil
       elseif View.sogface == boss then
         View.sogface = nil
+      elseif View.big_broach == boss then
+        View.big_broach = nil
       end
       startFloorMusic()
     end
@@ -3930,7 +3968,7 @@ function areAllRoomEnemiesDefeated()
   end
 
   -- A boss variable stays set while it is alive and during its death sequence.
-  if crawler or lilSnake or geometric or stuffing or View.sogface then
+  if crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach then
     return false
   end
   return not babyWidow or not babyWidow.alive
@@ -3938,7 +3976,7 @@ end
 
 -- True while a boss is alive or still playing its death sequence.
 function bossBattleOngoing()
-  return (crawler or lilSnake or geometric or stuffing or View.sogface) ~= nil
+  return (crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach) ~= nil
 end
 
 local function attachGeometricFeedback(boss)
@@ -3954,6 +3992,7 @@ function spawnRoomEnemies(room)
   geometric = nil
   stuffing = nil
   View.sogface = nil
+  View.big_broach = nil
   babyWidow = nil
 
   if room.cleared then
@@ -3994,6 +4033,11 @@ function spawnRoomEnemies(room)
     elseif definition.type == 'sogface' then
       View.sogface = require('sogface').new(world)
       View.sogface.onScreenShake = function(strength)
+        triggerScreenShake(strength)
+      end
+    elseif definition.type == 'big_broach' then
+      View.big_broach = require('big_broach').new(world)
+      View.big_broach.onScreenShake = function(strength)
         triggerScreenShake(strength)
       end
     elseif definition.type == 'breathless' then
@@ -4722,7 +4766,7 @@ function resumeGameAudio()
     end
 
     local bossEncounterActive = currentRoom and currentRoom.boss and not currentRoom.cleared
-    local bossBattleActive = bossEncounterActive or (currentRoom and currentRoom.boss and (crawler or lilSnake or geometric or stuffing or View.sogface))
+    local bossBattleActive = bossEncounterActive or (currentRoom and currentRoom.boss and (crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach))
     if bossBattleActive or gameState == 'boss_intro' then
       if skyMusic then
         skyMusic:stop()
@@ -4744,7 +4788,7 @@ function resumePausedAudio()
     return
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach
   if currentRoom and currentRoom.boss and activeBoss and activeBoss.alive then
     restoreBossMusicVolumes()
     if bossMusicPhase == 'active_start' then
@@ -4846,6 +4890,7 @@ loadFloor = function(floorIndex)
   lilSnake = nil
   geometric = nil
   View.sogface = nil
+  View.big_broach = nil
   babyWidow = nil
   acidProjectiles = {}
   ladder = nil
@@ -4985,7 +5030,7 @@ function drawSpecialRoomContents()
     end
   end
 
-  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface
+  local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach
   if activeBoss and activeBoss.deathSequence then
     local progress = 1 - activeBoss.deathSequence.timer / activeBoss.deathSequence.duration
     local radius = 18 + progress * 110
