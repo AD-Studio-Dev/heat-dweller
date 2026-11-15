@@ -1064,10 +1064,10 @@ end
 
 local function initializeAudio()
   matthewHurtSounds = {
-    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt1.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt2.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt3.wav', 'static')),
-    registerSfxSource(love.audio.newSource('resources/sfx/matthewhurt4.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthew_hurt_1.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthew_hurt_2.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthew_hurt_3.wav', 'static')),
+    registerSfxSource(love.audio.newSource('resources/sfx/matthew_hurt_4.wav', 'static')),
   }
   -- Optional sfx: a missing file just means no sound instead of a crash.
   local function loadOptionalSfx(path)
@@ -1082,9 +1082,9 @@ local function initializeAudio()
     end
     return registerSfxSource(source)
   end
-  extraSfx.deathSound = loadOptionalSfx('resources/sfx/deathsound.wav')
-  extraSfx.startRun = loadOptionalSfx('resources/sfx/startrun.wav')
-  local sweatSource = loadOptionalSfx('resources/sfx/sweatsfx.wav')
+  extraSfx.deathSound = loadOptionalSfx('resources/sfx/death_sound.wav')
+  extraSfx.startRun = loadOptionalSfx('resources/sfx/start_run.wav')
+  local sweatSource = loadOptionalSfx('resources/sfx/sweat_sfx.wav')
   extraSfx.sweatSounds, extraSfx.sweatIndex = nil, 0
   if sweatSource then
     -- A few copies taken in turn so fast shots overlap instead of cutting off.
@@ -1095,24 +1095,24 @@ local function initializeAudio()
     extraSfx.sweatSounds = pool
   end
   babyWidowSounds = {
-    enter = registerSfxSource(love.audio.newSource('resources/sfx/baby widow enter stage.wav', 'static')),
-    summon = registerSfxSource(love.audio.newSource('resources/sfx/baby widow summon.wav', 'static')),
+    enter = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_enter_stage.wav', 'static')),
+    summon = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_summon.wav', 'static')),
     -- TODO: Use inhale/throwup for a defined Baby Widow attack telegraph/release.
-    inhale = registerSfxSource(love.audio.newSource('resources/sfx/baby widow inhale.wav', 'static')),
-    throwup = registerSfxSource(love.audio.newSource('resources/sfx/baby widow throwup.wav', 'static')),
-    coughing = registerSfxSource(love.audio.newSource('resources/sfx/baby widow coughing.wav', 'static')),
-    death = registerSfxSource(love.audio.newSource('resources/sfx/baby widow death.wav', 'static')),
+    inhale = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_inhale.wav', 'static')),
+    throwup = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_throwup.wav', 'static')),
+    coughing = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_coughing.wav', 'static')),
+    death = registerSfxSource(love.audio.newSource('resources/sfx/baby_widow_death.wav', 'static')),
   }
-  local musicPath = 'resources/music/backgroundmusic.ogg'
+  local musicPath = 'resources/music/background_music.ogg'
   if not love.filesystem.getInfo(musicPath) then
-    musicPath = 'resources/music/resources_music_music_song(2).ogg'
+    musicPath = 'resources/music/backgroundmusic.ogg'
   end
   backgroundMusic = love.audio.newSource(musicPath, 'stream')
   backgroundMusic:setLooping(true)
   setFloorMusicVolume()
   backgroundMusic:play()
   backgroundMusic:pause()
-  menuMusic = love.audio.newSource('resources/music/mainmenumusic.ogg', 'stream')
+  menuMusic = love.audio.newSource('resources/music/main_menu_music.ogg', 'stream')
   menuMusic:setLooping(true)
   menuMusic:setVolume(0)
   menuMusic:stop()
@@ -1129,18 +1129,18 @@ local function initializeAudio()
   skyMusic:setLooping(true)
   skyMusic:setVolume(0)
   skyMusic:stop()
-  bossIntroMusic = love.audio.newSource('resources/music/bossfightstart.ogg', 'stream')
+  bossIntroMusic = love.audio.newSource('resources/sfx/boss_start.ogg', 'stream')
   bossIntroMusic:setLooping(false)
   bossIntroMusic:setVolume(audioMusicVolume)
-  bossActiveStartMusic = love.audio.newSource('resources/music/bossfightactivestart.ogg', 'stream')
+  bossActiveStartMusic = love.audio.newSource('resources/music/boss_active_start.ogg', 'stream')
   bossActiveStartMusic:setLooping(false)
   bossActiveStartMusic:setVolume(audioMusicVolume)
-  bossLoopMusic = love.audio.newSource('resources/music/bossfightactiveloop.ogg', 'stream')
+  bossLoopMusic = love.audio.newSource('resources/music/boss_active_loop.ogg', 'stream')
   bossLoopMusic:setLooping(true)
   bossLoopMusic:setVolume(audioMusicVolume)
   bossDefeatSound = nil
   local bossDefeatPaths = {
-    'resources/sfx/bossbeatwin.wav',
+    'resources/sfx/boss_defeat.wav',
   }
   for _, bossDefeatPath in ipairs(bossDefeatPaths) do
     if love.filesystem.getInfo(bossDefeatPath) then
@@ -1154,7 +1154,7 @@ local function initializeAudio()
     end
   end
   if not bossDefeatSound then
-    print('beatbosswin sound not found or unreadable; using the built-in chime instead.')
+    print('boss defeat sound not found or unreadable; using the built-in chime instead.')
     bossDefeatSound = createBossDefeatTone()
   end
   local floorTransitionPaths = {

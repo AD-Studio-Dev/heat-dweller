@@ -159,7 +159,7 @@ function Items.new()
     statNotifications = {},
   }, Items)
   self.notificationFont = love.graphics.newFont('resources/font/smallfont.ttf', 18)
-  self.pickupSound = love.audio.newSource('resources/sfx/find item.wav', 'static')
+  self.pickupSound = love.audio.newSource('resources/sfx/find_item.wav', 'static')
 
   local xml, readError = love.filesystem.read(itemDataPath)
   if not xml then

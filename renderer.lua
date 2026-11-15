@@ -88,7 +88,7 @@ end
 local COSTUMES = {
   { evolution = 'burnt_chilli', path = 'resources/gfx/characters/costumes/costume_003_matthew-blushred.png' },
 }
-local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweatattack_fire.png'
+local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweat_attack_fire.png'
 
 -- The Remote held in Matthew's hand (see remote.lua). The collectible sprite is
 -- drawn as-is, gripped at its bottom-centre, with its top pointing along the swing.
@@ -113,17 +113,17 @@ function Renderer.new(atlas)
   renderer.stationaryAngelImage:setFilter('nearest', 'nearest')
   renderer.divineBeamImage = love.graphics.newImage('resources/sprites/attack/divinebeam_attack.png')
   renderer.divineBeamImage:setFilter('nearest', 'nearest')
-  renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/thecrawler.png')
-  renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/thegeometric.png')
-  renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/thestuffing.png')
-  renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/thestuffingcharred.png')
-  renderer.geometricPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thegeometric_portrait.png')
-  renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thestuffing_portrait.png')
+  renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/the_crawler.png')
+  renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/the_geometric.png')
+  renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/the_stuffing.png')
+  renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/the_stuffing_charred.png')
+  renderer.geometricPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_geometric_portrait.png')
+  renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_stuffing_portrait.png')
   renderer.acidImage = love.graphics.newImage('resources/sprites/attack/acid_attack.png')
-  renderer.stuffingProjectileImage = love.graphics.newImage('resources/sprites/attack/thestuffing_attack.png')
-  renderer.sweatImage = love.graphics.newImage('resources/sprites/attack/sweatattack.png')
+  renderer.stuffingProjectileImage = love.graphics.newImage('resources/sprites/attack/the_stuffing_attack.png')
+  renderer.sweatImage = love.graphics.newImage('resources/sprites/attack/sweat_attack.png')
   renderer.sweatSplashImage = love.graphics.newImage('resources/sprites/attack/sweat_splash.png')
-  renderer.missingUnknownImage = love.graphics.newImage('resources/sprites/characters/missingunknown.png')
+  renderer.missingUnknownImage = love.graphics.newImage('resources/sprites/characters/missing_character.png')
   renderer.missingUnknownImage:setFilter('nearest', 'nearest')
   renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
@@ -154,8 +154,8 @@ function Renderer.new(atlas)
     )
   end
   renderer.matthewPortrait = love.graphics.newImage('resources/gfx/ui/stage/character_001_matthew_stage.png')
-  renderer.crawlerPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/thecrawler_portrait.png')
-  renderer.lilSnakePortrait = love.graphics.newImage('resources/gfx/bosses/portraits/lilsnake_portrait.png')
+  renderer.crawlerPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_crawler_portrait.png')
+  renderer.lilSnakePortrait = love.graphics.newImage('resources/gfx/bosses/portraits/lil_snake_portrait.png')
   renderer.playerNameImage = love.graphics.newImage('resources/gfx/ui/stage/playername_001_matthew.png')
   renderer.playerIconImage = love.graphics.newImage('resources/gfx/ui/stage/playericon_001_matthew.png')
   renderer.vsImage = love.graphics.newImage('resources/gfx/ui/stage/vs.png')

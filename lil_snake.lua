@@ -21,7 +21,7 @@ function LilSnake.load()
     return
   end
 
-  LilSnake.image = love.graphics.newImage('resources/gfx/bosses/lilsnake.png')
+  LilSnake.image = love.graphics.newImage('resources/gfx/bosses/lil_snake.png')
   LilSnake.image:setFilter('nearest', 'nearest')
   local imageWidth, imageHeight = LilSnake.image:getDimensions()
   LilSnake.frames = {}
