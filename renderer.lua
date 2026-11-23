@@ -160,7 +160,7 @@ function Renderer.new(atlas)
   renderer.playerIconImage = love.graphics.newImage('resources/gfx/ui/stage/playericon_001_matthew.png')
   renderer.vsImage = love.graphics.newImage('resources/gfx/ui/stage/vs.png')
   renderer.lilSnakeNameImage = love.graphics.newImage('resources/gfx/ui/stage/bossname_lilsnake.png')
-  local crawlerNamePath = 'resources/gfx/ui/stage/bossname_thecrawler.png'
+  local crawlerNamePath = 'resources/gfx/ui/stage/bossname_the_crawler.png'
   if love.filesystem.getInfo(crawlerNamePath) then
     renderer.crawlerNameImage = love.graphics.newImage(crawlerNamePath)
     renderer.crawlerNameImage:setFilter('nearest', 'nearest')
@@ -306,7 +306,7 @@ function Renderer:drawBossHealthBar(boss)
   local height = 18
   local y = love.graphics.getHeight() - 56
   local label = boss.kind == 'big_broach' and 'BIG BROACH'
-    or boss.kind == 'sogface' and 'SOGFACE'
+    or boss.kind == 'sogface' and (boss.sewerChampion and 'SEWER SOGFACE' or 'SOGFACE')
     or boss.kind == 'lilsnake' and "LIL' SNAKE"
     or boss.kind == 'geometric' and 'THE GEOMETRIC'
     or boss.kind == 'stuffing' and 'THE STUFFING' or 'THE CRAWLER'
@@ -327,7 +327,7 @@ function Renderer:drawBossHealthBar(boss)
   local portrait = boss.kind == 'geometric' and self.geometricPortrait
     or boss.kind == 'lilsnake' and self.lilSnakePortrait
     or boss.kind == 'stuffing' and self.stuffingPortrait
-    or boss.kind == 'sogface' and require('sogface').getPortrait()
+    or boss.kind == 'sogface' and require('sogface').getPortrait(boss.variant)
     or boss.kind == 'big_broach' and require('big_broach').getPortrait() or self.crawlerPortrait
   local portraitX = panelX + width - iconSize
   local portraitY = y + (height - iconSize) / 2
@@ -965,7 +965,7 @@ function Renderer:drawGeometric(boss, camera)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
-function Renderer:drawBossIntro(bossType, progress)
+function Renderer:drawBossIntro(bossType, progress, bossVariant)
   local width = love.graphics.getWidth()
   local height = love.graphics.getHeight()
   progress = math.max(0, math.min(1, progress or 1))
@@ -1042,7 +1042,12 @@ function Renderer:drawBossIntro(bossType, progress)
     love.graphics.setColor(0.98, 0.83, 0.58, alpha)
     love.graphics.setFont(self.bigFont)
     love.graphics.printf('SOGFACE', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
-    local sogfacePortrait = require('sogface').getPortrait()
+    if bossVariant == 'sewer' then
+      love.graphics.setFont(self.smallFont)
+      love.graphics.setColor(0.62, 0.7, 0.5, alpha)
+      love.graphics.printf('SEWER CHAMPION', math.floor(bossNameX), math.floor(centerY - 40), 240, 'center')
+    end
+    local sogfacePortrait = require('sogface').getPortrait(bossVariant)
     if sogfacePortrait then
       love.graphics.setColor(1, 1, 1, alpha)
       love.graphics.draw(sogfacePortrait, math.floor(bossPortraitX), math.floor(centerY - 96), 0, 2, 2)

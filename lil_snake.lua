@@ -16,6 +16,85 @@ LilSnake.frameData = {
   bodyRightAlt = { x = 192, y = 48, w = 48, h = 48, duration = 0.1 },
 }
 
+-- Sound effects (resources/sfx/), static sources loaded once when this module is
+-- first required. A missing file only means no sound.
+local function loadSfx(path)
+  if not (love and love.audio and love.filesystem) then
+    return nil
+  end
+  if not love.filesystem.getInfo(path) then
+    print("Lil' Snake sound effect missing: " .. path)
+    return nil
+  end
+  local ok, source = pcall(love.audio.newSource, path, 'static')
+  if not ok or not source then
+    print("Lil' Snake sound effect could not be loaded: " .. path .. ': ' .. tostring(source))
+    return nil
+  end
+  return source
+end
+
+local function loadSfxGroup(paths)
+  local group = {}
+  for _, path in ipairs(paths) do
+    group[#group + 1] = loadSfx(path)
+  end
+  return group
+end
+
+LilSnake.sfx = {
+  hurt = loadSfxGroup({
+    'resources/sfx/lil_snake_hurt.wav',
+    'resources/sfx/lil_snake_hurt_2.wav',
+  }),
+  death = loadSfxGroup({
+    'resources/sfx/lil_snake_death.wav',
+    'resources/sfx/lil_snake_death_2.wav',
+  }),
+}
+
+local HURT_SOUND_COOLDOWN = 0.1 -- seconds; fast shots should not machine-gun the clip
+
+-- Every loaded source, so main.lua can register them with the SFX volume setting.
+function LilSnake.getSfxSources()
+  local sources = {}
+  for _, group in pairs(LilSnake.sfx) do
+    for _, source in ipairs(group) do
+      sources[#sources + 1] = source
+    end
+  end
+  return sources
+end
+
+-- Plays a random clip from the group. stop() rewinds it, so a repeat starts over.
+-- Hurt clips get a slight pitch variation (0.95 - 1.05); death clips play as authored.
+local function playRandomSfx(group, varyPitch)
+  if #group == 0 then
+    return
+  end
+  local source = group[math.random(1, #group)]
+  source:stop()
+  source:setPitch(varyPitch and (0.95 + math.random() * 0.1) or 1)
+  source:play()
+end
+
+function LilSnake:playHurtSound()
+  local now = love.timer.getTime()
+  if self.lastHurtSoundTime and now - self.lastHurtSoundTime < HURT_SOUND_COOLDOWN then
+    return
+  end
+  self.lastHurtSoundTime = now
+  playRandomSfx(LilSnake.sfx.hurt, true)
+end
+
+function LilSnake:playDeathSound()
+  if self.deathSoundPlayed then
+    return
+  end
+  self.deathSoundPlayed = true
+  playRandomSfx(LilSnake.sfx.death, false)
+end
+
 function LilSnake.load()
   if LilSnake.image then
     return
@@ -193,6 +272,23 @@ function LilSnake:spawnFloorHole(player)
   }
 end
 
+-- Returns true when this hit kills it (same shape as the other bosses). Every damage
+-- route goes through here: damageTarget() in main.lua calls it when it exists.
+function LilSnake:takeDamage(amount)
+  if not self.alive then
+    return false
+  end
+  self.health = math.max(0, self.health - (amount or 0))
+  if self.health <= 0 then
+    self.alive = false
+    self:playDeathSound()
+  else
+    self:playHurtSound()
+  end
+  self.lastHealth = self.health
+  return self.health <= 0
+end
+
 function LilSnake:updateFloorHoles(dt)
   for index = #self.holes, 1, -1 do
     local hole = self.holes[index]
@@ -206,8 +302,15 @@ end
 function LilSnake:update(dt, player)
   self:updateFloorHoles(dt)
   if not self.alive then
+    self:playDeathSound() -- killed by code that wrote health / alive directly
     return
   end
+  -- Safety net for damage that bypasses takeDamage(). lastHealth starts unset so a
+  -- health value restored from a save is not mistaken for a hit.
+  if self.lastHealth and self.health < self.lastHealth then
+    self:playHurtSound()
+  end
+  self.lastHealth = self.health
   local speedScale = Wet.update(self, dt)
 
   self:normalizeTrail()

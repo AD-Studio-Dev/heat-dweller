@@ -439,6 +439,12 @@ local function hardStopMusicSources()
       source:setVolume(0)
     end
   end
+  -- Bedroom / Attic floor tracks (View.floorTrackMusic)
+  for _, track in pairs(View.floorTrackMusic or {}) do
+    track:stop()
+    track:setVolume(0)
+  end
+  View.floorTrackFade = nil
 end
 
 -- Boss music sources get muted by hardStopMusicSources() (boss death, floor
@@ -557,6 +563,9 @@ local function setAudioSettings(musicVolume, sfxVolume, shakeEnabled)
   if basementOscMusic then basementOscMusic:setVolume(audioMusicVolume) end
   if kitchenMusic then kitchenMusic:setVolume(audioMusicVolume) end
   if skyMusic then skyMusic:setVolume(audioMusicVolume) end
+  for _, track in pairs(View.floorTrackMusic or {}) do
+    if track:isPlaying() then track:setVolume(audioMusicVolume) end
+  end
   profile.musicVolume = audioMusicVolume
   profile.sfxVolume = audioSfxVolume
   profile.screenShakeEnabled = screenShakeEnabled
@@ -1039,6 +1048,7 @@ local function restartRunAfterDeath()
   stopBasementMusic(false)
   stopKitchenMusic(false)
   stopSkyMusic(false)
+  View.stopFloorTrackMusic(false)
   if backgroundMusic then
     backgroundMusic:stop()
     backgroundMusic:setVolume(0)
@@ -1157,9 +1167,41 @@ local function initializeAudio()
     print('boss defeat sound not found or unreadable; using the built-in chime instead.')
     bossDefeatSound = createBossDefeatTone()
   end
+  -- Boss sound effects are loaded by their own modules at require time; register them
+  -- so the SFX volume setting reaches them.
+  for _, bossSource in ipairs(require('sogface').getSfxSources()) do
+    registerSfxSource(bossSource)
+  end
+  for _, bossSource in ipairs(LilSnake.getSfxSources()) do
+    registerSfxSource(bossSource)
+  end
+  extraSfx.bonusPickup = createMenuTone(660, 990, 0.14)
+
+  -- Looping 'stream' tracks for floors with their own song. A missing file falls back
+  -- to the shared background track.
+  View.floorTrackMusic = {}
+  local floorTrackPaths = {
+    bedroom = 'resources/music/bedroom/bedroomsong.ogg',
+    attic = 'resources/music/theattic/theatticsong.ogg',
+  }
+  for floorType, trackPath in pairs(floorTrackPaths) do
+    if love.filesystem.getInfo(trackPath) then
+      local loaded, track = pcall(love.audio.newSource, trackPath, 'stream')
+      if loaded and track then
+        track:setLooping(true)
+        track:setVolume(0)
+        track:stop()
+        View.floorTrackMusic[floorType] = track
+      else
+        print('Floor music failed to load (' .. trackPath .. '): ' .. tostring(track))
+      end
+    else
+      print('Floor music missing: ' .. trackPath)
+    end
+  end
   local floorTransitionPaths = {
-    'resources/sfx/floor transition.wav',
-    'resources/sfx/floor transition.wav',
+    'resources/sfx/floor_transition.wav',
+    'resources/sfx/floor_transition.wav',
   }
   for _, floorTransitionPath in ipairs(floorTransitionPaths) do
     if love.filesystem.getInfo(floorTransitionPath) then
@@ -1501,6 +1543,7 @@ saveRun = function()
     sogface = saveEntity(View.sogface, {
       'x', 'y', 'health', 'maxHealth', 'alive', 'vx', 'vy', 'state', 'stateTimer',
       'stateDuration', 'animationTime', 'attackCount', 'contactCooldown',
+      'variant', 'sewerChampion', 'bonusPickup',
     }),
     big_broach = saveEntity(View.big_broach, {
       'x', 'y', 'health', 'maxHealth', 'alive', 'state', 'stateTimer', 'stateDuration',
@@ -1712,6 +1755,7 @@ continueRun = function()
     stopBasementMusic(false)
     stopKitchenMusic(false)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(false)
     if backgroundMusic then
       backgroundMusic:stop()
       backgroundMusic:setVolume(0)
@@ -1724,6 +1768,7 @@ continueRun = function()
   elseif world.floorType == 'kitchen' then
     stopBasementMusic(false)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(false)
     if backgroundMusic then
       backgroundMusic:stop()
       backgroundMusic:setVolume(0)
@@ -1741,14 +1786,18 @@ continueRun = function()
     else
       startSkyMusic()
     end
+  elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+    View.startFloorTrackMusic()
   elseif world.floorType ~= 'basement' then
     stopBasementMusic(false)
     stopKitchenMusic(false)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(false)
     backgroundMusic:play()
   else
     stopKitchenMusic(false)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(false)
     if backgroundMusic then
       backgroundMusic:stop()
       backgroundMusic:setVolume(0)
@@ -1887,6 +1936,142 @@ function View.awardDefeat(target)
   elseif not target.geometricPart then
     player.stats.dollars = player.stats.dollars + 1
   end
+end
+
+-- Sewer Champion Sogface (sogface.lua sets `bonusPickup`) drops one guaranteed pickup
+-- when it dies: a heart (only while hurt), a coin or a key. Pickups live on
+-- currentRoom.bonusPickups, so they are saved with the room and survive leaving it.
+View.BONUS_PICKUP_RADIUS = 40
+View.BONUS_COIN_VALUE = 5 -- dollars
+View.BONUS_HEART_HEAL = 20 -- one heart (20 HP)
+View.bonusPopups = {}
+
+function View.spawnBonusPickup(boss)
+  if not currentRoom then
+    return
+  end
+  local kinds = { 'coin', 'key' }
+  if player.stats.health < player.stats.maxHealth then
+    kinds[#kinds + 1] = 'heart'
+  end
+  local margin = 128
+  local x = math.max(margin, math.min(world.width - margin, boss.x))
+  local y = math.max(margin, math.min(world.height - margin, boss.y))
+  -- The floor reward appears at the room's centre; keep the bonus clear of it.
+  local centerX, centerY = world.width / 2, world.height / 2
+  if (x - centerX) ^ 2 + (y - centerY) ^ 2 < 120 * 120 then
+    x, y = centerX + 170, centerY
+  end
+  currentRoom.bonusPickups = currentRoom.bonusPickups or {}
+  currentRoom.bonusPickups[#currentRoom.bonusPickups + 1] = {
+    kind = kinds[math.random(1, #kinds)], x = x, y = y, age = 0,
+  }
+end
+
+function View.collectBonusPickup(pickup)
+  local stats = player.stats
+  local text
+  if pickup.kind == 'heart' then
+    stats.health = math.min(stats.maxHealth, stats.health + View.BONUS_HEART_HEAL)
+    text = '+1 HEART'
+  elseif pickup.kind == 'coin' then
+    stats.dollars = stats.dollars + View.BONUS_COIN_VALUE
+    text = '+$' .. View.BONUS_COIN_VALUE
+  else
+    stats.keys = (stats.keys or 0) + 1
+    text = '+1 KEY'
+  end
+  if extraSfx.bonusPickup then
+    extraSfx.bonusPickup:stop()
+    extraSfx.bonusPickup:play()
+  end
+  View.bonusPopups[#View.bonusPopups + 1] = { text = text, x = pickup.x, y = pickup.y - 30, life = 1.2 }
+end
+
+function View.updateBonusPickups(dt)
+  for index = #View.bonusPopups, 1, -1 do
+    local popup = View.bonusPopups[index]
+    popup.life = popup.life - dt
+    popup.y = popup.y - 24 * dt
+    if popup.life <= 0 then
+      table.remove(View.bonusPopups, index)
+    end
+  end
+
+  local list = currentRoom and currentRoom.bonusPickups
+  if not list or not player or player.stats.health <= 0 then
+    return
+  end
+  local radius = View.BONUS_PICKUP_RADIUS
+  for index = #list, 1, -1 do
+    local pickup = list[index]
+    pickup.age = pickup.age + dt
+    if pickup.age >= 0.5 then
+      local offsetX, offsetY = player.x - pickup.x, player.y - pickup.y
+      if offsetX * offsetX + offsetY * offsetY <= radius * radius then
+        View.collectBonusPickup(pickup)
+        table.remove(list, index)
+      end
+    end
+  end
+end
+
+function View.drawBonusPickupShape(kind)
+  if kind == 'heart' then
+    love.graphics.setColor(0.86, 0.12, 0.2, 1)
+    love.graphics.circle('fill', -6, -4, 7)
+    love.graphics.circle('fill', 6, -4, 7)
+    love.graphics.polygon('fill', -12.5, -1, 12.5, -1, 0, 13)
+    love.graphics.setColor(1, 0.7, 0.72, 0.9)
+    love.graphics.circle('fill', -8, -6, 2)
+  elseif kind == 'coin' then
+    love.graphics.setColor(0.98, 0.8, 0.2, 1)
+    love.graphics.circle('fill', 0, 0, 11)
+    love.graphics.setColor(0.7, 0.5, 0.1, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.circle('line', 0, 0, 11)
+    love.graphics.circle('line', 0, 0, 6)
+    love.graphics.setLineWidth(1)
+  else
+    love.graphics.setColor(0.98, 0.8, 0.2, 1)
+    love.graphics.setLineWidth(3)
+    love.graphics.circle('line', -8, 0, 5)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle('fill', -3, -2, 18, 4)
+    love.graphics.rectangle('fill', 9, 1, 3, 6)
+    love.graphics.rectangle('fill', 14, 1, 3, 5)
+  end
+end
+
+function View.drawBonusPickups(camera)
+  local list = currentRoom and currentRoom.bonusPickups
+  if list then
+    for _, pickup in ipairs(list) do
+      local appear = math.min(1, pickup.age / 0.25)
+      local bob = math.sin(pickup.age * 4) * 4
+      local screenX = math.floor(pickup.x - camera.x)
+      local screenY = math.floor(pickup.y - camera.y)
+      love.graphics.setColor(0, 0, 0, 0.25 * appear)
+      love.graphics.ellipse('fill', screenX, screenY + 16, 13 * appear, 4)
+      love.graphics.push()
+      love.graphics.translate(screenX, screenY + math.floor(bob))
+      love.graphics.scale(1.4 * appear, 1.4 * appear)
+      View.drawBonusPickupShape(pickup.kind)
+      love.graphics.pop()
+    end
+  end
+  if #View.bonusPopups > 0 and renderer.smallFont then
+    love.graphics.setFont(renderer.smallFont)
+    for _, popup in ipairs(View.bonusPopups) do
+      local alpha = math.min(1, popup.life / 0.4)
+      local textX, textY = math.floor(popup.x - camera.x - 60), math.floor(popup.y - camera.y)
+      love.graphics.setColor(0, 0, 0, 0.6 * alpha)
+      love.graphics.printf(popup.text, textX + 1, textY + 1, 120, 'center')
+      love.graphics.setColor(1, 0.95, 0.7, alpha)
+      love.graphics.printf(popup.text, textX, textY, 120, 'center')
+    end
+  end
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 View.remoteDirections = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 }, right = { 1, 0 } }
@@ -2028,6 +2213,7 @@ function View.beginRunStart()
   stopBasementMusic(false)
   stopKitchenMusic(false)
   stopSkyMusic(false)
+  View.stopFloorTrackMusic(false)
   if backgroundMusic then
     backgroundMusic:stop()
     backgroundMusic:setVolume(0)
@@ -2053,6 +2239,8 @@ function View.startRunMusic()
     startBasementMusic()
   elseif floorType == 'sky' then
     startSkyMusic()
+  elseif View.floorTrackMusic and View.floorTrackMusic[floorType] then
+    View.startFloorTrackMusic() -- fades in by itself, like the others
   else
     View.runStart.bgMusic = true -- the shared track is ramped in View.updateRunStart
     backgroundMusic:stop()
@@ -2168,6 +2356,7 @@ function love.update(dt)
   updateBasementMusicFade(dt)
   updateKitchenMusicFade(dt)
   updateSkyMusicFade(dt)
+  View.updateFloorTrackMusicFade(dt)
   if gameState == 'title' then
     mainMenu:update(dt)
     return
@@ -2445,6 +2634,7 @@ function love.update(dt)
   if updateBossDeathParticles then
     updateBossDeathParticles(dt)
   end
+  View.updateBonusPickups(dt)
 
   openRoomDoorsIfClear()
 
@@ -2800,6 +2990,7 @@ local function captureGameplayPauseFrame()
     end
   end
   renderer:drawBabyWidow(babyWidow, world.camera)
+  View.drawBonusPickups(world.camera)
   if lilSnake then
     lilSnake:draw(world.camera)
   end
@@ -2871,6 +3062,7 @@ function drawGameplayScene(shakeX, shakeY)
     end
   end
   renderer:drawBabyWidow(babyWidow, world.camera)
+  View.drawBonusPickups(world.camera)
   if lilSnake then
     lilSnake:draw(world.camera)
   end
@@ -2978,7 +3170,8 @@ View.drawFrame = function()
   end
 
   if gameState == 'boss_intro' then
-    renderer:drawBossIntro(bossIntroType, bossIntroTimer / 1.8)
+    renderer:drawBossIntro(bossIntroType, bossIntroTimer / 1.8,
+      View.sogface and View.sogface.variant or nil)
     return
   end
 
@@ -3206,6 +3399,7 @@ function love.keypressed(key)
         bossLoopMusic:stop()
         bossMusicPhase = nil
         stopBasementMusic(false)
+        View.stopFloorTrackMusic(false)
         backgroundMusic:stop()
         gameState = 'title'
         mainMenu:resetNavigation('main')
@@ -3368,6 +3562,7 @@ function love.gamepadpressed(_, button)
         bossLoopMusic:stop()
         bossMusicPhase = nil
         stopBasementMusic(false)
+        View.stopFloorTrackMusic(false)
         backgroundMusic:stop()
         gameState = 'title'
         mainMenu:resetNavigation('main')
@@ -3834,10 +4029,13 @@ function startFloorMusic()
     startBasementMusic()
   elseif world.floorType == 'sky' then
     startSkyMusic()
+  elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+    View.startFloorTrackMusic()
   else
     stopKitchenMusic(false)
     stopBasementMusic(false)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(false)
     setFloorMusicVolume()
     backgroundMusic:play()
   end
@@ -3866,6 +4064,9 @@ function startBossDeathSequence(boss)
   }
   bossDeathParticles = {}
   spawnBossDeathParticles(boss)
+  if boss.bonusPickup then
+    View.spawnBonusPickup(boss)
+  end
   bossDefeated = true
   isAudioLocked = false
   profile.bossesDefeated = profile.bossesDefeated + 1
@@ -4119,6 +4320,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
     stopBasementMusic(true)
     stopKitchenMusic(true)
     stopSkyMusic(false)
+    View.stopFloorTrackMusic(true)
     backgroundMusic:stop()
     bossIntroMusic:stop()
     bossActiveStartMusic:stop()
@@ -4145,10 +4347,13 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
       else
         startSkyMusic()
       end
+    elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+      View.startFloorTrackMusic()
     else
       stopKitchenMusic(false)
       stopBasementMusic(false)
       stopSkyMusic(false)
+      View.stopFloorTrackMusic(false)
       backgroundMusic:play()
     end
     gameState = 'playing'
@@ -4353,6 +4558,8 @@ function startGame(debugBossType)
     startKitchenMusic()
   elseif world.floorType == 'basement' then
     startBasementMusic()
+  elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+    View.startFloorTrackMusic()
   else
     stopKitchenMusic(false)
     stopBasementMusic(false)
@@ -4718,6 +4925,79 @@ function updateSkyMusicFade(dt)
   end
 end
 
+-- Bedroom / Attic: looping stream tracks kept in View.floorTrackMusic[floorType].
+-- Returns without doing anything when the current floor has no track.
+function View.startFloorTrackMusic()
+  local track = View.floorTrackMusic and View.floorTrackMusic[world.floorType]
+  if not track or isAudioLocked then
+    return
+  end
+
+  stopBasementMusic(false)
+  stopKitchenMusic(false)
+  stopSkyMusic(false)
+  if backgroundMusic then
+    backgroundMusic:stop()
+    backgroundMusic:setVolume(0)
+  end
+  for _, other in pairs(View.floorTrackMusic) do
+    if other ~= track then
+      other:stop()
+      other:setVolume(0)
+    end
+  end
+
+  if track:isPlaying() then
+    View.floorTrackFade = nil
+    track:setVolume(audioMusicVolume)
+    return
+  end
+  track:stop()
+  track:setVolume(0)
+  track:play()
+  View.floorTrackFade = { source = track, elapsed = 0, duration = 0.75, from = 0, to = 1 }
+end
+
+function View.stopFloorTrackMusic(fade)
+  if not View.floorTrackMusic then
+    return
+  end
+  if not fade then
+    for _, track in pairs(View.floorTrackMusic) do
+      track:stop()
+      track:setVolume(0)
+    end
+    View.floorTrackFade = nil
+    return
+  end
+  for _, track in pairs(View.floorTrackMusic) do
+    if track:isPlaying() then
+      local currentVolume = track:getVolume()
+      if audioMusicVolume > 0 then
+        currentVolume = currentVolume / audioMusicVolume
+      end
+      View.floorTrackFade = { source = track, elapsed = 0, duration = 0.75, from = currentVolume, to = 0 }
+    end
+  end
+end
+
+function View.updateFloorTrackMusicFade(dt)
+  local fade = View.floorTrackFade
+  if not fade then
+    return
+  end
+  fade.elapsed = math.min(fade.elapsed + dt, fade.duration)
+  local progress = fade.elapsed / fade.duration
+  fade.source:setVolume((fade.from + (fade.to - fade.from) * progress) * audioMusicVolume)
+  if progress >= 1 then
+    View.floorTrackFade = nil
+    if fade.to == 0 then
+      fade.source:stop()
+      fade.source:setVolume(0)
+    end
+  end
+end
+
 function pauseGameAudio()
   local function duck(source)
     if source then
@@ -4735,6 +5015,9 @@ function pauseGameAudio()
   duck(basementOscMusic)
   duck(kitchenMusic)
   duck(skyMusic)
+  for _, track in pairs(View.floorTrackMusic or {}) do
+    duck(track)
+  end
 end
 
 function resumeGameAudio()
@@ -4777,6 +5060,10 @@ function resumeGameAudio()
 
     if skyMusic and not bossBattleOngoing() then
       restore(skyMusic, audioMusicVolume)
+    end
+  elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+    if not bossBattleOngoing() then
+      restore(View.floorTrackMusic[world.floorType], audioMusicVolume)
     end
   else
     restore(backgroundMusic, audioMusicVolume * math.min(1, 0.75 + math.max(0, (world and world.floorIndex or 1) - 1) * 0.04))
@@ -4823,6 +5110,7 @@ function transitionToNextFloor()
   stopBasementMusic(false)
   stopKitchenMusic(false)
   stopSkyMusic(false)
+  View.stopFloorTrackMusic(false)
   hardStopMusicSources()
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
@@ -4856,6 +5144,7 @@ loadFloor = function(floorIndex)
   stopBasementMusic(false)
   stopKitchenMusic(false)
   stopSkyMusic(false)
+  View.stopFloorTrackMusic(false)
   bossIntroMusic:stop()
   bossActiveStartMusic:stop()
   bossLoopMusic:stop()
@@ -4907,6 +5196,8 @@ loadFloor = function(floorIndex)
       backgroundMusic:setVolume(0)
     end
     startSkyMusic()
+  elseif View.floorTrackMusic and View.floorTrackMusic[world.floorType] then
+    View.startFloorTrackMusic()
   else
     setFloorMusicVolume()
     backgroundMusic:play()

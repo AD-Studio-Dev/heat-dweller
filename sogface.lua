@@ -7,13 +7,26 @@
 --   3 puffed-cheek wind-up           4 small "O" transition
 --   5 wide-open "O" spit             6 post-spit exhausted hold
 --
+-- Variant: 25% of spawns are the Sewer Champion (resources/gfx/bosses/sogface_sewer.png,
+-- same six-frame layout): +25% max HP, murky olive tears, and one guaranteed bonus
+-- pickup on defeat (main.lua reads `bonusPickup`).
+--
+-- Sound effects (resources/sfx/, loaded once when this module is first required):
+--   sogface_inhale.wav / sogface_inhale_2.wav  cheek-puff telegraph (frames 3-4)
+--   sogface_spit.wav / sogface_spit_2.wav      the spit burst (frames 5-6)
+--
 -- Everything lives in this module (state, projectiles, puddles, drawing) so
 -- main.lua only needs one reference (View.sogface) and no new top-level locals.
 ---@diagnostic disable: undefined-global
 local Sogface = {}
 Sogface.__index = Sogface
 
-Sogface.SHEET_PATH = 'resources/gfx/bosses/sogface.png'
+Sogface.SHEET_PATHS = {
+  normal = 'resources/gfx/bosses/sogface.png',
+  sewer = 'resources/gfx/bosses/sogface_sewer.png',
+}
+Sogface.SHEET_PATH = Sogface.SHEET_PATHS.normal
+Sogface.VARIANT_NORMAL, Sogface.VARIANT_SEWER = 'normal', 'sewer'
 
 local FRAME_COUNT = 6
 local FRAME_IDLE_WIDE, FRAME_IDLE_TALL = 1, 2
@@ -39,6 +52,13 @@ local EXHAUST_RAMP = 0.4          -- last part of the hold eases speed back up
 
 local WATER_COLOR = { 0.31, 0.765, 0.969 }   -- #4FC3F7
 local WATER_DARK = { 0.12, 0.5, 0.8 }
+local WATER_SHINE = { 0.85, 0.96, 1 }
+-- Sewer Champion: murky olive tears, with a darker rim and a dull highlight.
+local SEWER_COLOR = { 0.48, 0.55, 0.41 }
+local SEWER_DARK = { 0.29, 0.33, 0.25 }
+local SEWER_SHINE = { 0.78, 0.84, 0.7 }
+local SEWER_CHANCE = 0.25             -- chance a spawned Sogface is the Sewer Champion
+local SEWER_HEALTH_MULTIPLIER = 1.25  -- +25% max HP
 local RING_COUNT, RING_SPEED = 8, 250
 local FAN_COUNT, FAN_SPREAD, FAN_SPEED = 5, 0.24, 300
 local PROJECTILE_RADIUS = 11
@@ -62,49 +82,138 @@ local HIT_FLASH_TIME = 0.12
 
 local atan2 = math.atan2 or function(y, x) return math.atan(y, x) end
 
+-- Sound effects ----------------------------------------------------------------
+
+-- Static sources, loaded once at module startup. A missing file only means no sound.
+local function loadSfx(path)
+  if not (love and love.audio and love.filesystem) then
+    return nil
+  end
+  if not love.filesystem.getInfo(path) then
+    print('Sogface sound effect missing: ' .. path)
+    return nil
+  end
+  local ok, source = pcall(love.audio.newSource, path, 'static')
+  if not ok or not source then
+    print('Sogface sound effect could not be loaded: ' .. path .. ': ' .. tostring(source))
+    return nil
+  end
+  return source
+end
+
+local function loadSfxGroup(paths)
+  local group = {}
+  for _, path in ipairs(paths) do
+    group[#group + 1] = loadSfx(path)
+  end
+  return group
+end
+
+Sogface.sfx = {
+  inhale = loadSfxGroup({
+    'resources/sfx/sogface_inhale.wav',
+    'resources/sfx/sogface_inhale_2.wav',
+  }),
+  spit = loadSfxGroup({
+    'resources/sfx/sogface_spit.wav',
+    'resources/sfx/sogface_spit_2.wav',
+  }),
+}
+
+-- Every loaded source, so main.lua can register them with the SFX volume setting.
+function Sogface.getSfxSources()
+  local sources = {}
+  for _, group in pairs(Sogface.sfx) do
+    for _, source in ipairs(group) do
+      sources[#sources + 1] = source
+    end
+  end
+  return sources
+end
+
+-- Plays a random clip from the group at a subtle random pitch (0.95 - 1.05).
+-- stop() rewinds the source, so a repeat always starts from the beginning.
+local function playRandomSfx(group)
+  if #group == 0 then
+    return
+  end
+  local source = group[math.random(1, #group)]
+  source:stop()
+  source:setPitch(0.95 + math.random() * 0.1)
+  source:play()
+end
+
 -- Assets ---------------------------------------------------------------------
 
-function Sogface.loadAssets()
-  if Sogface.image ~= nil then
-    return Sogface.image or nil
+-- Loads (once) and returns the sprite sheet for a variant:
+-- { image, frameW, frameH, quads }. A missing Sewer Champion sheet falls back to the
+-- normal sheet, so the variant stays playable. Returns nil if no sheet loads at all.
+function Sogface.loadAssets(variant)
+  if not Sogface.SHEET_PATHS[variant] then
+    variant = Sogface.VARIANT_NORMAL
   end
-  Sogface.image = false -- remember a failed load so we do not retry every spawn
-  if not love.filesystem.getInfo(Sogface.SHEET_PATH) then
-    print('Sogface sprite sheet missing: ' .. Sogface.SHEET_PATH)
-    return nil
+  Sogface.sheets = Sogface.sheets or {}
+  local cached = Sogface.sheets[variant]
+  if cached ~= nil then
+    return cached or nil
   end
-  local ok, image = pcall(love.graphics.newImage, Sogface.SHEET_PATH)
+  Sogface.sheets[variant] = false -- remember a failed load so we do not retry every spawn
+
+  local path = Sogface.SHEET_PATHS[variant]
+  if not love.filesystem.getInfo(path) then
+    print('Sogface sprite sheet missing: ' .. path)
+    if variant ~= Sogface.VARIANT_NORMAL then
+      Sogface.sheets[variant] = Sogface.loadAssets(Sogface.VARIANT_NORMAL) or false
+    end
+    return Sogface.sheets[variant] or nil
+  end
+  local ok, image = pcall(love.graphics.newImage, path)
   if not ok or not image then
     print('Sogface sprite sheet could not be loaded: ' .. tostring(image))
-    return nil
+    if variant ~= Sogface.VARIANT_NORMAL then
+      Sogface.sheets[variant] = Sogface.loadAssets(Sogface.VARIANT_NORMAL) or false
+    end
+    return Sogface.sheets[variant] or nil
   end
   image:setFilter('nearest', 'nearest')
   local imageWidth, imageHeight = image:getWidth(), image:getHeight()
-  Sogface.frameW = imageWidth / FRAME_COUNT
-  Sogface.frameH = imageHeight
-  Sogface.quads = {}
+  local sheet = {
+    path = path,
+    image = image,
+    frameW = imageWidth / FRAME_COUNT,
+    frameH = imageHeight,
+    quads = {},
+  }
   for index = 1, FRAME_COUNT do
-    Sogface.quads[index] = love.graphics.newQuad(
-      (index - 1) * Sogface.frameW, 0, Sogface.frameW, Sogface.frameH,
+    sheet.quads[index] = love.graphics.newQuad(
+      (index - 1) * sheet.frameW, 0, sheet.frameW, sheet.frameH,
       imageWidth, imageHeight
     )
   end
-  Sogface.image = image
-  return image
+  Sogface.sheets[variant] = sheet
+  if variant == Sogface.VARIANT_NORMAL then -- keep the old single-sheet fields
+    Sogface.image, Sogface.frameW, Sogface.frameH, Sogface.quads = image, sheet.frameW, sheet.frameH, sheet.quads
+  end
+  return sheet
 end
 
 -- Frame 1 as a standalone image, for the boss HP bar and the boss intro card.
-function Sogface.getPortrait()
-  if Sogface.portrait ~= nil then
-    return Sogface.portrait or nil
+function Sogface.getPortrait(variant)
+  if not Sogface.SHEET_PATHS[variant] then
+    variant = Sogface.VARIANT_NORMAL
   end
-  Sogface.portrait = false
-  if not Sogface.loadAssets() then
+  Sogface.portraits = Sogface.portraits or {}
+  if Sogface.portraits[variant] ~= nil then
+    return Sogface.portraits[variant] or nil
+  end
+  Sogface.portraits[variant] = false
+  local sheet = Sogface.loadAssets(variant)
+  if not sheet then
     return nil
   end
   local ok, portrait = pcall(function()
-    local source = love.image.newImageData(Sogface.SHEET_PATH)
-    local frameW, frameH = math.floor(Sogface.frameW), math.floor(Sogface.frameH)
+    local source = love.image.newImageData(sheet.path)
+    local frameW, frameH = math.floor(sheet.frameW), math.floor(sheet.frameH)
     local cropped = love.image.newImageData(frameW, frameH)
     cropped:paste(source, 0, 0, 0, 0, frameW, frameH)
     local image = love.graphics.newImage(cropped)
@@ -112,7 +221,7 @@ function Sogface.getPortrait()
     return image
   end)
   if ok then
-    Sogface.portrait = portrait
+    Sogface.portraits[variant] = portrait
     return portrait
   end
   return nil
@@ -124,17 +233,30 @@ local function randomIdleTime()
   return IDLE_MIN + math.random() * (IDLE_MAX - IDLE_MIN)
 end
 
-function Sogface.new(world)
-  Sogface.loadAssets()
+-- `options.variant` ('normal' or 'sewer') forces a variant (debugging, tests);
+-- otherwise there is a 25% chance of the Sewer Champion.
+function Sogface.new(world, options)
+  local variant = options and options.variant
+  if not Sogface.SHEET_PATHS[variant] then
+    variant = math.random() < SEWER_CHANCE and Sogface.VARIANT_SEWER or Sogface.VARIANT_NORMAL
+  end
+  local sewer = variant == Sogface.VARIANT_SEWER
+  Sogface.loadAssets(variant)
   local health = BASE_HEALTH
   if (world.floorIndex or 1) >= 2 then
     health = FLOOR_TWO_HEALTH
+  end
+  if sewer then
+    health = math.floor(health * SEWER_HEALTH_MULTIPLIER + 0.5)
   end
   local directionX = math.random(0, 1) == 0 and -1 or 1
   local directionY = math.random(0, 1) == 0 and -1 or 1
 
   return setmetatable({
     kind = 'sogface',
+    variant = variant,
+    sewerChampion = sewer,
+    bonusPickup = sewer, -- main.lua drops one guaranteed heart / coin / key on defeat
     world = world,
     x = world.width / 2,
     y = world.height / 2,
@@ -189,11 +311,22 @@ end
 
 -- State machine --------------------------------------------------------------
 
+-- Water / olive-green colours for tears and puddles.
+function Sogface:getPalette()
+  if self.variant == Sogface.VARIANT_SEWER then
+    return SEWER_COLOR, SEWER_DARK, SEWER_SHINE
+  end
+  return WATER_COLOR, WATER_DARK, WATER_SHINE
+end
+
 function Sogface:setState(state, duration)
   self.state = state
   self.stateDuration = duration
   self.stateTimer = duration
-  if state == 'spit' then
+  if state == 'windup' then
+    playRandomSfx(Sogface.sfx.inhale) -- cheek-puff telegraph (frames 3-4)
+  elseif state == 'spit' then
+    playRandomSfx(Sogface.sfx.spit) -- the burst (frames 5-6)
     -- Recoil pop: snap narrow and tall, then ease back to normal.
     self.sx, self.sy = 0.8, 1.24
     if self.onScreenShake then
@@ -460,39 +593,41 @@ end
 
 -- Drawing ----------------------------------------------------------------------
 
-local function drawWater(projectile, cameraX, cameraY)
+local function drawWater(projectile, cameraX, cameraY, color, dark, shine)
   local x = math.floor(projectile.x - cameraX)
   local y = math.floor(projectile.y - cameraY)
   local radius = projectile.radius
   love.graphics.push()
   love.graphics.translate(x, y)
   love.graphics.rotate(projectile.angle or 0)
-  love.graphics.setColor(WATER_DARK[1], WATER_DARK[2], WATER_DARK[3], 1)
+  love.graphics.setColor(dark[1], dark[2], dark[3], 1)
   love.graphics.ellipse('fill', 0, 0, radius * 1.3 + 2, radius * 0.9 + 2)
-  love.graphics.setColor(WATER_COLOR[1], WATER_COLOR[2], WATER_COLOR[3], 1)
+  love.graphics.setColor(color[1], color[2], color[3], 1)
   love.graphics.ellipse('fill', 0, 0, radius * 1.3, radius * 0.9)
-  love.graphics.setColor(0.85, 0.96, 1, 0.9)
+  love.graphics.setColor(shine[1], shine[2], shine[3], 0.9)
   love.graphics.ellipse('fill', radius * 0.25, -radius * 0.25, radius * 0.4, radius * 0.22)
   love.graphics.pop()
 end
 
 function Sogface:draw(camera)
   local cameraX, cameraY = camera and camera.x or 0, camera and camera.y or 0
+  local waterColor, waterDark, waterShine = self:getPalette()
 
   -- Puddles lie on the floor, under everything.
   for _, puddle in ipairs(self.puddles) do
     local fade = math.min(1, puddle.life / 1.2)
-    love.graphics.setColor(WATER_COLOR[1], WATER_COLOR[2], WATER_COLOR[3], 0.42 * fade)
+    love.graphics.setColor(waterColor[1], waterColor[2], waterColor[3], 0.42 * fade)
     love.graphics.ellipse('fill',
       math.floor(puddle.x - cameraX), math.floor(puddle.y - cameraY),
       puddle.radius, puddle.radius * 0.5)
-    love.graphics.setColor(0.85, 0.96, 1, 0.25 * fade)
+    love.graphics.setColor(waterShine[1], waterShine[2], waterShine[3], 0.25 * fade)
     love.graphics.ellipse('line',
       math.floor(puddle.x - cameraX), math.floor(puddle.y - cameraY),
       puddle.radius, puddle.radius * 0.5)
   end
 
-  local image = Sogface.image
+  local sheet = Sogface.loadAssets(self.variant)
+  local image = sheet and sheet.image
   local screenX = math.floor(self.x - cameraX)
   local screenY = math.floor(self.y - cameraY)
 
@@ -520,8 +655,8 @@ function Sogface:draw(camera)
     end
 
     if image then
-      local quad = Sogface.quads[self:getFrameIndex()]
-      local originX, originY = Sogface.frameW / 2, Sogface.frameH / 2
+      local quad = sheet.quads[self:getFrameIndex()]
+      local originX, originY = sheet.frameW / 2, sheet.frameH / 2
       local drawX = screenX + shakeX
       love.graphics.setColor(1, 1, 1, alpha)
       love.graphics.draw(image, quad, drawX, bodyY, 0,
@@ -535,14 +670,14 @@ function Sogface:draw(camera)
       end
     else
       -- Sprite sheet missing: a plain blue blob so the fight is still playable.
-      love.graphics.setColor(WATER_DARK[1], WATER_DARK[2], WATER_DARK[3], alpha)
+      love.graphics.setColor(waterDark[1], waterDark[2], waterDark[3], alpha)
       love.graphics.ellipse('fill', screenX + shakeX, bodyY,
         self.radius * scaleX, self.radius * scaleY)
     end
   end
 
   for _, projectile in ipairs(self.projectiles) do
-    drawWater(projectile, cameraX, cameraY)
+    drawWater(projectile, cameraX, cameraY, waterColor, waterDark, waterShine)
   end
   love.graphics.setColor(1, 1, 1, 1)
 end
