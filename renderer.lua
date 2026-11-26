@@ -41,7 +41,7 @@ local HUD_MARGIN = 16
 --   4 toxic full 5 toxic half 6 ice full 7 ice half 8 gold full 9 gold half
 -- A cell index maps to column = index % columns, row = floor(index / columns), where
 -- columns = floor(sheet width / 32), so nothing is hard-coded to one sheet width.
-local HEART_CELL = 32
+local HEART_CELL = 16 -- sheet is 64x48: 4 columns x 3 rows of 16x16 hearts
 local HEART_SEQUENCE = {
   { 'red', 'full' }, { 'red', 'half' }, { 'empty' },
   { 'toxic', 'full' }, { 'toxic', 'half' },
@@ -215,6 +215,21 @@ function Renderer.new(atlas)
     renderer.crawlerNameImage:setFilter('nearest', 'nearest')
   end
   renderer.lilSnakeImage = LilSnake.image
+  -- Boss intro name banners. Optional files: a missing one just falls back to text.
+  local function loadBossName(...)
+    for _, path in ipairs({ ... }) do
+      if love.filesystem.getInfo(path) then
+        local image = love.graphics.newImage(path)
+        image:setFilter('nearest', 'nearest')
+        return image
+      end
+    end
+  end
+  renderer.sogfaceNameImage = loadBossName('resources/gfx/ui/boss/bossname_sogface.png')
+  renderer.geometricNameImage = loadBossName(
+    'resources/gfx/ui/boss/bossname_the_geomertric.png',
+    'resources/gfx/ui/boss/bossname_the_geometric.png')
+  renderer.stuffingNameImage = loadBossName('resources/gfx/ui/boss/bossname_the_stuffing.png')
   renderer.enemyImage:setFilter('nearest', 'nearest')
   renderer.spiderImage:setFilter('nearest', 'nearest')
   renderer.centipedeImage:setFilter('nearest', 'nearest')
@@ -569,7 +584,7 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
         local y = math.floor(statsY + row * statRowHeight)
         love.graphics.setColor(1, 1, 1, 1)
         if stat.quad then
-          love.graphics.draw(stat.image, stat.quad, x, y, 0, STAT_ICON_SCALE, STAT_ICON_SCALE)
+          love.graphics.draw(stat.image, stat.quad, x, y, 0, STAT_ICON_SCALE * 2, STAT_ICON_SCALE * 2) -- 16x16 heart cell at 2x
         else
           love.graphics.draw(stat.image, x, y, 0, STAT_ICON_SCALE, STAT_ICON_SCALE)
         end
@@ -1011,136 +1026,152 @@ function Renderer:drawGeometric(boss, camera)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Boss intro splash, laid out like Isaac's "versus" screen:
+--   top row     MATTHEW name | VS | boss name
+--   bottom row  Matthew portrait on a small ground shadow | boss portrait on a larger one
+-- progress runs 0..1: slide in (0 - 0.28), hold (0.28 - 0.82), fade to black (0.82 - 1).
+-- Every sprite is drawn at a whole-number scale so the pixel art stays sharp.
+local INTRO_SLIDE_END, INTRO_FADE_START = 0.28, 0.82
+local INTRO_NAME_SCALE = 2
+local INTRO_PLAYER_HEIGHT, INTRO_BOSS_HEIGHT = 192, 256 -- target on-screen portrait heights
+
+local function easeOutCubic(t)
+  local u = 1 - t
+  return 1 - u * u * u
+end
+
+-- Whole-number scale that brings an image closest to the target height.
+local function introScale(image, quad, targetHeight)
+  local height = quad and select(4, quad:getViewport()) or image:getHeight()
+  return math.max(1, math.floor(targetHeight / height + 0.5))
+end
+
+function Renderer:getBossIntroVignette(width, height)
+  local cache = self.bossIntroVignette
+  if cache and cache.width == width and cache.height == height then
+    return cache.mesh
+  end
+  -- Triangle fan: transparent centre, dark rim.
+  local centerX, centerY = width / 2, height / 2
+  local vertices = { { centerX, centerY, 0, 0, 0.0, 0.0, 0.0, 0.0 } }
+  local segments = 48
+  for step = 0, segments do
+    local angle = step / segments * math.pi * 2
+    local x = centerX + math.cos(angle) * width * 0.78
+    local y = centerY + math.sin(angle) * height * 0.95
+    vertices[#vertices + 1] = { x, y, 0, 0, 0, 0, 0, 1 }
+  end
+  local mesh = love.graphics.newMesh(vertices, 'fan', 'static')
+  self.bossIntroVignette = { width = width, height = height, mesh = mesh }
+  return mesh
+end
+
 function Renderer:drawBossIntro(bossType, progress, bossVariant)
   local width = love.graphics.getWidth()
   local height = love.graphics.getHeight()
   progress = math.max(0, math.min(1, progress or 1))
-  local slideProgress = math.min(1, progress / 0.55)
-  slideProgress = 1 - (1 - slideProgress) * (1 - slideProgress)
-  local alpha = math.min(1, progress / 0.18)
-  local centerY = height / 2
-  local leftX = width * 0.09
-  local rightNameX = width - 416
-  local portraitX = width - 200
+  local slide = easeOutCubic(math.min(1, progress / INTRO_SLIDE_END))
+  local alpha = math.min(1, progress / (INTRO_SLIDE_END * 0.6))
+  local fade = progress > INTRO_FADE_START and (progress - INTRO_FADE_START) / (1 - INTRO_FADE_START) or 0
 
-  love.graphics.setColor(0.035, 0.025, 0.025, 1)
+  -- Backdrop: dark warm floor with a heavy vignette.
+  love.graphics.setColor(0.17, 0.09, 0.09, 1)
   love.graphics.rectangle('fill', 0, 0, width, height)
-  love.graphics.setColor(0.65, 0.25, 0.12, 0.24 * alpha)
-  love.graphics.setLineWidth(2)
-  love.graphics.line(48, 104, width - 48, 104)
-  love.graphics.line(48, height - 104, width - 48, height - 104)
-  love.graphics.setLineWidth(1)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(self:getBossIntroVignette(width, height), 0, 0)
 
-  love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-  love.graphics.setFont(self.bigFont)
-  love.graphics.printf('BOSS ENCOUNTER', 0, 66, width, 'center')
-
-  local leftStartX = -220
-  local rightStartX = width + 220
-  local playerX = leftStartX + (leftX - leftStartX) * slideProgress
-  local bossNameX = rightStartX + (rightNameX - rightStartX) * slideProgress
-  local bossPortraitX = rightStartX + (portraitX - rightStartX) * slideProgress
-  local versusY = centerY - 32 + (1 - slideProgress) * -70
-
-  love.graphics.setColor(1, 1, 1, alpha)
-  love.graphics.draw(
-    self.playerIconImage,
-    math.floor(playerX),
-    math.floor(centerY - 48),
-    0,
-    1,
-    1,
-    0,
-    0
-  )
-  love.graphics.setColor(1, 1, 1, alpha)
-  love.graphics.draw(
-    self.playerNameImage,
-    math.floor(playerX + 108),
-    math.floor(centerY - 32)
-  )
-  love.graphics.setColor(1, 1, 1, alpha)
-  love.graphics.draw(self.vsImage, math.floor((width - 128) / 2), math.floor(versusY))
-
+  -- Resolve the boss art. Name images exist for every boss except Big Broach.
+  local portrait, portraitQuad, nameImage, nameText, subtitle
   if bossType == 'geometric' then
-    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-    love.graphics.setFont(self.bigFont)
-    love.graphics.printf('THE GEOMETRIC', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
-    love.graphics.setColor(1, 1, 1, alpha)
-    love.graphics.draw(
-      self.geometricPortrait,
-      math.floor(bossPortraitX),
-      math.floor(centerY - 96),
-      0,
-      4,
-      4
-    )
+    portrait, nameImage, nameText = self.geometricPortrait, self.geometricNameImage, 'THE GEOMETRIC'
   elseif bossType == 'big_broach' then
-    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-    love.graphics.setFont(self.bigFont)
-    love.graphics.printf('BIG BROACH', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
-    local broachPortrait = require('big_broach').getPortrait()
-    if broachPortrait then
-      love.graphics.setColor(1, 1, 1, alpha)
-      love.graphics.draw(broachPortrait, math.floor(bossPortraitX), math.floor(centerY - 96), 0, 2, 2)
-    end
+    portrait, nameText = require('big_broach').getPortrait(), 'BIG BONED'
   elseif bossType == 'sogface' then
-    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-    love.graphics.setFont(self.bigFont)
-    love.graphics.printf('SOGFACE', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
-    if bossVariant == 'sewer' then
-      love.graphics.setFont(self.smallFont)
-      love.graphics.setColor(0.62, 0.7, 0.5, alpha)
-      love.graphics.printf('SEWER CHAMPION', math.floor(bossNameX), math.floor(centerY - 40), 240, 'center')
-    end
-    local sogfacePortrait = require('sogface').getPortrait(bossVariant)
-    if sogfacePortrait then
-      love.graphics.setColor(1, 1, 1, alpha)
-      love.graphics.draw(sogfacePortrait, math.floor(bossPortraitX), math.floor(centerY - 96), 0, 2, 2)
-    end
+    portrait, nameImage, nameText = require('sogface').getPortrait(bossVariant), self.sogfaceNameImage, 'SOGFACE'
+    subtitle = bossVariant == 'sewer' and 'SEWER CHAMPION' or nil
   elseif bossType == 'stuffing' then
-    love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-    love.graphics.setFont(self.bigFont)
-    love.graphics.printf('THE STUFFING', math.floor(bossNameX), math.floor(centerY - 16), 240, 'center')
-    love.graphics.setColor(1, 1, 1, alpha)
-    love.graphics.draw(
-      self.stuffingPortrait,
-      math.floor(bossPortraitX),
-      math.floor(centerY - 96),
-      0,
-      4,
-      4
-    )
+    portrait, nameImage, nameText = self.stuffingPortrait, self.stuffingNameImage, 'THE STUFFING'
   elseif bossType == 'lilsnake' then
-    love.graphics.draw(self.lilSnakeNameImage, math.floor(bossNameX), math.floor(centerY - 32))
-    love.graphics.draw(
-      self.lilSnakeImage,
-      self.lilSnakePortraitQuad,
-      math.floor(bossPortraitX),
-      math.floor(centerY - 96),
-      0,
-      4,
-      4
-    )
+    portrait, nameImage, nameText = self.lilSnakePortrait, self.lilSnakeNameImage, "LIL' SNAKE"
   else
-    if self.crawlerNameImage then
-      love.graphics.draw(self.crawlerNameImage, math.floor(bossNameX), math.floor(centerY - 32))
-    else
-      love.graphics.setColor(0.98, 0.83, 0.58, alpha)
-      love.graphics.setFont(self.bigFont)
-      love.graphics.printf('THE CRAWLER', math.floor(bossNameX), math.floor(centerY - 16), 192, 'center')
-    end
-    love.graphics.setColor(1, 1, 1, alpha)
-    love.graphics.draw(
-      self.crawlerPortrait,
-      math.floor(bossPortraitX),
-      math.floor(centerY - 46),
-      0,
-      92 / self.crawlerPortrait:getWidth(),
-      92 / self.crawlerPortrait:getHeight()
-    )
+    portrait, nameImage, nameText = self.crawlerPortrait, self.crawlerNameImage, 'THE CRAWLER'
   end
 
+  local playerCenterX, bossCenterX = width * 0.22, width * 0.78
+  local nameTop = math.floor(height * 0.08)
+  local groundY = math.floor(height * 0.82)
+  local slideDistance = width * 0.55 * (1 - slide)
+
+  -- Ground shadows: flat two-tone ellipses (small for Matthew, larger for the boss).
+  local function shadow(centerX, radiusX, radiusY)
+    love.graphics.setColor(0, 0, 0, 0.28 * alpha)
+    love.graphics.ellipse('fill', math.floor(centerX), groundY, radiusX, radiusY, 64)
+    love.graphics.setColor(0, 0, 0, 0.32 * alpha)
+    love.graphics.ellipse('fill', math.floor(centerX), groundY, radiusX * 0.72, radiusY * 0.72, 64)
+  end
+  shadow(playerCenterX - slideDistance, 112, 26)
+  shadow(bossCenterX + slideDistance, 200, 44)
+
+  -- Draws an image (or quad) centered on centerX with its bottom edge at bottomY.
+  local function drawPortrait(image, quad, centerX, bottomY, scale)
+    local w, h
+    if quad then
+      local _, _, qw, qh = quad:getViewport()
+      w, h = qw, qh
+    else
+      w, h = image:getWidth(), image:getHeight()
+    end
+    local x = math.floor(centerX - w * scale / 2)
+    local y = math.floor(bottomY - h * scale)
+    love.graphics.setColor(1, 1, 1, alpha)
+    if quad then
+      love.graphics.draw(image, quad, x, y, 0, scale, scale)
+    else
+      love.graphics.draw(image, x, y, 0, scale, scale)
+    end
+  end
+
+  -- Portraits, standing slightly above the shadow centre.
+  drawPortrait(self.playerIconImage, nil, playerCenterX - slideDistance, groundY + 14,
+    introScale(self.playerIconImage, nil, INTRO_PLAYER_HEIGHT))
+  if portrait then
+    drawPortrait(portrait, portraitQuad, bossCenterX + slideDistance, groundY + 20,
+      introScale(portrait, portraitQuad, INTRO_BOSS_HEIGHT))
+  end
+
+  -- Top row: MATTHEW | VS | boss name. Names slide in from their own side, VS drops in.
+  local function drawBanner(image, centerX, top, scale)
+    love.graphics.setColor(1, 1, 1, alpha)
+    love.graphics.draw(image, math.floor(centerX - image:getWidth() * scale / 2), math.floor(top), 0, scale, scale)
+  end
+  drawBanner(self.playerNameImage, playerCenterX - slideDistance, nameTop, INTRO_NAME_SCALE)
+  drawBanner(self.vsImage, width / 2, nameTop - 40 * (1 - slide), INTRO_NAME_SCALE)
+  local bossNameX = bossCenterX + slideDistance
+  if nameImage then
+    drawBanner(nameImage, bossNameX, nameTop, INTRO_NAME_SCALE)
+  else
+    -- No name banner exists for this boss yet: same slot, same colours as the art.
+    local font = self.bigFont
+    local scale = 3
+    local textX = math.floor(bossNameX - font:getWidth(nameText) * scale / 2)
+    local textY = math.floor(nameTop + (64 * INTRO_NAME_SCALE - font:getHeight() * scale) / 2)
+    love.graphics.setFont(font)
+    love.graphics.setColor(0, 0, 0, 0.7 * alpha)
+    love.graphics.print(nameText, textX + scale, textY + scale, 0, scale, scale)
+    love.graphics.setColor(0.52, 0.58, 0.28, alpha)
+    love.graphics.print(nameText, textX, textY, 0, scale, scale)
+  end
+  if subtitle then
+    love.graphics.setFont(self.smallFont)
+    love.graphics.setColor(0.62, 0.7, 0.5, alpha)
+    love.graphics.printf(subtitle, math.floor(bossNameX - 160), nameTop + 64 * INTRO_NAME_SCALE + 4, 320, 'center')
+  end
+
+  -- Fade out into the fight.
+  if fade > 0 then
+    love.graphics.setColor(0, 0, 0, fade)
+    love.graphics.rectangle('fill', 0, 0, width, height)
+  end
   love.graphics.setLineWidth(1)
   love.graphics.setColor(1, 1, 1, 1)
 end
@@ -1428,16 +1459,17 @@ local function printShadowed(text, x, y, alpha)
   love.graphics.print(text, x, y)
 end
 
--- Everything here floats on the stone walls: hearts top-right, stats hugging the
--- left wall, coins under the hearts, inventory along the bottom wall. Each element
+-- Everything here floats on the stone walls: minimap top-left with the hearts to
+-- its right, coins under the minimap, stats hugging the left wall, inventory along the bottom wall. Each element
 -- is slightly transparent so the bricks stay faintly visible beneath it.
-function Renderer:drawHud(player, items)
+function Renderer:drawHud(player, items, rooms)
   local screenWidth, screenHeight = love.graphics.getDimensions()
-  local rightEdge = screenWidth - HUD_MARGIN
+  local mapX, mapY, mapWidth, mapHeight = self:getMinimapLayout(rooms)
 
-  -- Hearts: top-right, right-aligned, wrapping after 10 per row.
-  local hudScale = snapScale(1.25) -- whole-number scale only
-  local heartSize = 32 * hudScale
+  -- Hearts: one horizontal row, to the right of the minimap along the top edge.
+  -- Matthew has 3 red containers (60 HP), so he gets exactly 3 hearts.
+  local hudScale = 2 -- each 16x16 heart is drawn at an exact 2x (32x32 on screen)
+  local heartSize = HEART_CELL * hudScale
   local heartSpacing = heartSize + 2
   local heartsPerRow = 10
   local health = math.max(0, player.stats.health)
@@ -1445,7 +1477,7 @@ function Renderer:drawHud(player, items)
   local quads = self.heartQuads
 
   -- One slot per heart, in display order: every red container (full, half or empty),
-  -- then the toxic, ice and gold hearts the player is carrying.
+  -- then any toxic, ice or gold hearts the player picks up (none at the start).
   local slots = {}
   for index = 1, heartCount do
     local heartValue = health - (index - 1) * HP_PER_HEART
@@ -1461,9 +1493,8 @@ function Renderer:drawHud(player, items)
     end
   end
 
-  local firstRowCount = math.min(#slots, heartsPerRow)
-  local heartsLeft = rightEdge - firstRowCount * heartSpacing + (heartSpacing - heartSize)
-  local heartsTop = HUD_MARGIN
+  local heartsLeft = mapX + mapWidth + 12
+  local heartsTop = mapY
   love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   for index, quad in ipairs(slots) do
     local column = (index - 1) % heartsPerRow
@@ -1479,15 +1510,12 @@ function Renderer:drawHud(player, items)
     )
   end
 
-  -- Coins: right-aligned, directly under the hearts.
-  local heartRows = math.max(1, math.ceil(#slots / heartsPerRow))
-  local coinsY = snap(heartsTop + heartRows * (heartSize + 4) + 2)
+  -- Coins: directly under the minimap, left edge flush with the minimap's.
+  local coinsY = snap(mapY + mapHeight + 6)
   local coinsIconScale = snapScale(1.5)
   local coinsText = tostring(player.stats.dollars or 0)
   local coinsGap = 8
-  local coinsWidth = self.coinsIcon:getWidth() * coinsIconScale
-    + coinsGap + self.coinsFont:getWidth(coinsText)
-  local coinsX = snap(rightEdge - coinsWidth)
+  local coinsX = mapX
   love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   love.graphics.draw(self.coinsIcon, coinsX, coinsY, 0, coinsIconScale, coinsIconScale)
   love.graphics.setFont(self.coinsFont)
@@ -1641,19 +1669,16 @@ function Renderer:drawPickupNotification(item, elapsed, duration)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
-function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
-  if not rooms or #rooms == 0 then
-    return
-  end
-
-  -- Top-left, floating on the top and left walls.
+-- Minimap panel geometry (top-left corner). Shared with drawHud so the hearts and
+-- the coin counter can be placed against the panel's real edges.
+local MINIMAP_PANEL_X, MINIMAP_PANEL_Y = HUD_MARGIN - 4, HUD_MARGIN - 6
+function Renderer:getMinimapLayout(rooms)
   local panelWidth = 176
   local panelHeight = 112
-  local panelX = HUD_MARGIN - 4
-  local panelY = HUD_MARGIN - 6
+  local panelX, panelY = MINIMAP_PANEL_X, MINIMAP_PANEL_Y
   local padding = 12
   local maxDistanceX, maxDistanceY = 0, 0
-  for _, room in ipairs(rooms) do
+  for _, room in ipairs(rooms or {}) do
     maxDistanceX = math.max(maxDistanceX, math.abs(room.gridX))
     maxDistanceY = math.max(maxDistanceY, math.abs(room.gridY))
   end
@@ -1672,6 +1697,15 @@ function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
     panelWidth = math.max(panelWidth, gridWidth * cellSize + padding * 2)
     panelHeight = math.max(panelHeight, gridHeight * cellSize + padding * 2)
   end
+  return panelX, panelY, panelWidth, panelHeight, cellSize, useSprites
+end
+
+function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
+  if not rooms or #rooms == 0 then
+    return
+  end
+
+  local panelX, panelY, panelWidth, panelHeight, cellSize, useSprites = self:getMinimapLayout(rooms)
 
   love.graphics.setColor(0.03, 0.04, 0.05, 0.5)
   love.graphics.rectangle('fill', panelX, panelY, panelWidth, panelHeight)

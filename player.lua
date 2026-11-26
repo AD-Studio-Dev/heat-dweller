@@ -55,11 +55,10 @@ function Player.new(config)
     sweatShotDelay = config.sweatShotDelay or 0.35,
     onShootSweat = config.onShootSweat, 
 
-    -- Stats modified by passive collectibles. Health is in HP: 20 HP = one heart, so
-    -- Matthew starts with 3 red hearts.
+    -- Stats modified by passive collectibles.
     stats = {
       damage = 3,
-      maxHealth = 60,
+      maxHealth = 60, -- 3 full red hearts (20 HP = one heart, 10 HP = a half heart)
       health = 60,
       dollars = 20,
       luck = 0,
