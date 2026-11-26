@@ -7,7 +7,7 @@ local drawScribble
 local drawFlame
 local drawLogo
 
-local LOGO_PATH = 'resources/gfx/ui/stage/mainmenutitle.png'
+local LOGO_PATH = 'resources/gfx/ui/mainmenu/menu_logo.png'
 
 local menuOptions = { 'NEW GAME', 'CONTINUE RUN', 'OPTIONS', 'EXTRAS', 'QUIT' }
 local settingsOptions = { 'MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'BACK' }
@@ -116,7 +116,7 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     flashDuration = 0.22,
     navigationHistory = {},
     backInputCooldown = 0,
-    stageBackground = love.graphics.newImage('resources/gfx/ui/stage/mainmenustage.png'),
+    stageBackground = love.graphics.newImage('resources/gfx/ui/mainmenu/menu_bg.png'),
     pauseSelection = 1,
     pauseScreen = 'main',
     pauseFrameCanvas = nil,

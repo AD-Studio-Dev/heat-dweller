@@ -337,7 +337,7 @@ function Items:rerollPassiveInventory(player, x, y)
   local dollars = stats.dollars
   local health = stats.health
   stats.damage = 20
-  stats.maxHealth = 100
+  stats.maxHealth = 60 -- Matthew's starting 3 red hearts (see Player.new)
   stats.health = math.min(health, stats.maxHealth)
   stats.luck = 0
   stats.keys = 0

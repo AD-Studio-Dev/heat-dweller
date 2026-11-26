@@ -14,7 +14,7 @@ local BigBroach = {}
 BigBroach.__index = BigBroach
 
 BigBroach.SHEET_PATH = 'resources/gfx/bosses/big_broach.png'
-BigBroach.PORTRAIT_PATH = 'resources/gfx/bosses/portraits/bigbroach_portrait.png'
+BigBroach.PORTRAIT_PATH = 'resources/gfx/ui/boss/portrait_big_broach.png'
 
 local FRAME_COUNT = 8
 local DIRECTION_INDEX = { front = 1, right = 2, left = 3, back = 4 }

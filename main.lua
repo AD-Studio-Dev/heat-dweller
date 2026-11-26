@@ -172,7 +172,7 @@ local characters = {
     subtitle = 'Son of Mark',
     quote = "I'm going, one step at a time.",
     isUnlocked = true,
-    imagePath = 'resources/sprites/characters/character_001_matthew.png',
+    imagePath = 'resources/gfx/effects/characters/character_001_matthew.png',
     spriteSheetPath = 'resources/gfx/characters/characters_001_matthew.png',
   },
   {
@@ -181,7 +181,7 @@ local characters = {
     subtitle = 'The Unstable Spark',
     quote = 'Touch me and see what happens.',
     isUnlocked = false,
-    imagePath = 'resources/sprites/characters/character_002_stella.png',
+    imagePath = 'resources/gfx/effects/characters/character_002_stella.png',
   },
 }
 
@@ -1093,8 +1093,8 @@ local function initializeAudio()
     return registerSfxSource(source)
   end
   extraSfx.deathSound = loadOptionalSfx('resources/sfx/death_sound.wav')
-  extraSfx.startRun = loadOptionalSfx('resources/sfx/start_run.wav')
-  local sweatSource = loadOptionalSfx('resources/sfx/sweat_sfx.wav')
+  extraSfx.startRun = loadOptionalSfx('resources/sfx/run_start.wav')
+  local sweatSource = loadOptionalSfx('resources/sfx/sweat_shoot.wav')
   extraSfx.sweatSounds, extraSfx.sweatIndex = nil, 0
   if sweatSource then
     -- A few copies taken in turn so fast shots overlap instead of cutting off.
@@ -1122,7 +1122,7 @@ local function initializeAudio()
   setFloorMusicVolume()
   backgroundMusic:play()
   backgroundMusic:pause()
-  menuMusic = love.audio.newSource('resources/music/main_menu_music.ogg', 'stream')
+  menuMusic = love.audio.newSource('resources/music/main_menu.ogg', 'stream')
   menuMusic:setLooping(true)
   menuMusic:setVolume(0)
   menuMusic:stop()
@@ -1139,7 +1139,7 @@ local function initializeAudio()
   skyMusic:setLooping(true)
   skyMusic:setVolume(0)
   skyMusic:stop()
-  bossIntroMusic = love.audio.newSource('resources/sfx/boss_start.ogg', 'stream')
+  bossIntroMusic = love.audio.newSource('resources/sfx/meet_boss.wav', 'stream')
   bossIntroMusic:setLooping(false)
   bossIntroMusic:setVolume(audioMusicVolume)
   bossActiveStartMusic = love.audio.newSource('resources/music/boss_active_start.ogg', 'stream')
@@ -1268,7 +1268,7 @@ function love.load()
   love.window.setTitle('Heat Dweller')
   loadTileAssets()
   -- Splash shown over the black screen while startrun.wav plays (optional art).
-  local runStartImagePath = 'resources/gfx/ui/stage/runstartimage.png'
+  local runStartImagePath = 'resources/gfx/ui/mainmenu/run_load_image.png'
   View.runStartImage = nil
   if love.filesystem.getInfo(runStartImagePath) then
     View.runStartImage = love.graphics.newImage(runStartImagePath)

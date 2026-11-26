@@ -127,7 +127,7 @@ The main LÖVE lifecycle is:
 
 The `resources/` tree holds sprites, tiles, fonts, music/SFX, and data. Item
 definitions come from `resources/items.xml`; sprite sheet frame data is JSON
-(for example `resources/sprites/attack/firefoam.json` and the door sheets'
+(for example `resources/gfx/effects/fire_extinguisher_foam.json` and the door sheets'
 `doors.json`). Prefer extending the system that already owns the behavior
 instead of adding duplicate orchestration to `main.lua`.
 

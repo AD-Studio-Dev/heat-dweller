@@ -34,6 +34,55 @@ end
 -- The HUD floats directly on the angled stone wall frame (no sidebars), so it
 -- hugs the canvas edge. HUD_ALPHA lets the brick texture show through it.
 local HUD_MARGIN = 16
+
+-- heartshud.png: 32 x 32 cells read left to right, then row by row (so the same order
+-- works for one long row or a sheet that wraps). The order is fixed:
+--   1 red full   2 red half   3 empty container
+--   4 toxic full 5 toxic half 6 ice full 7 ice half 8 gold full 9 gold half
+-- A cell index maps to column = index % columns, row = floor(index / columns), where
+-- columns = floor(sheet width / 32), so nothing is hard-coded to one sheet width.
+local HEART_CELL = 32
+local HEART_SEQUENCE = {
+  { 'red', 'full' }, { 'red', 'half' }, { 'empty' },
+  { 'toxic', 'full' }, { 'toxic', 'half' },
+  { 'ice', 'full' }, { 'ice', 'half' },
+  { 'gold', 'full' }, { 'gold', 'half' },
+}
+-- Extra (non-red) hearts, in the order they are drawn after the red containers. Each
+-- reads its health from player.stats[statKey] in HP (20 HP = one heart); absent = none.
+local EXTRA_HEARTS = {
+  { kind = 'toxic', statKey = 'toxicHealth' },
+  { kind = 'ice', statKey = 'iceHealth' },
+  { kind = 'gold', statKey = 'goldHealth' },
+}
+local HP_PER_HEART = 20
+
+-- Slices the sheet into { red = {full, half}, empty = quad, toxic = {...}, ice = {...},
+-- gold = {...} }. Cells that fall outside the image are left nil and simply not drawn.
+local function buildHeartQuads(image)
+  local imageWidth, imageHeight = image:getDimensions()
+  local columns = math.max(1, math.floor(imageWidth / HEART_CELL))
+  local quads = { red = {}, toxic = {}, ice = {}, gold = {} }
+  for index, entry in ipairs(HEART_SEQUENCE) do
+    local cell = index - 1
+    local x = (cell % columns) * HEART_CELL
+    local y = math.floor(cell / columns) * HEART_CELL
+    if x + HEART_CELL <= imageWidth and y + HEART_CELL <= imageHeight then
+      local quad = love.graphics.newQuad(x, y, HEART_CELL, HEART_CELL, imageWidth, imageHeight)
+      if entry[2] then
+        quads[entry[1]][entry[2]] = quad
+      else
+        quads[entry[1]] = quad
+      end
+    else
+      print(string.format('heartshud.png is missing heart #%d (%s%s); it will not be drawn.',
+        index, entry[1], entry[2] and (' ' .. entry[2]) or ''))
+    end
+  end
+  -- Older code (character carousel) reads heartQuads.full / .half for the red heart.
+  quads.full, quads.half = quads.red.full, quads.red.half
+  return quads
+end
 local HUD_ALPHA = 0.88
 
 -- Stat icons are 32 x 32 pixel art. They are always drawn at a whole-number scale
@@ -88,7 +137,7 @@ end
 local COSTUMES = {
   { evolution = 'burnt_chilli', path = 'resources/gfx/characters/costumes/costume_003_matthew-blushred.png' },
 }
-local FIRE_SWEAT_PATH = 'resources/sprites/attack/sweat_attack_fire.png'
+local FIRE_SWEAT_PATH = 'resources/gfx/effects/sweat_attack_fire.png'
 
 -- The Remote held in Matthew's hand (see remote.lua). The collectible sprite is
 -- drawn as-is, gripped at its bottom-centre, with its top pointing along the swing.
@@ -111,21 +160,21 @@ function Renderer.new(atlas)
   renderer.centipedeImage = love.graphics.newImage('resources/gfx/monsters/centipede.png')
   renderer.stationaryAngelImage = love.graphics.newImage('resources/gfx/monsters/stationaryangel.png')
   renderer.stationaryAngelImage:setFilter('nearest', 'nearest')
-  renderer.divineBeamImage = love.graphics.newImage('resources/sprites/attack/divinebeam_attack.png')
+  renderer.divineBeamImage = love.graphics.newImage('resources/gfx/effects/divinebeam_attack.png')
   renderer.divineBeamImage:setFilter('nearest', 'nearest')
   renderer.crawlerImage = love.graphics.newImage('resources/gfx/bosses/the_crawler.png')
   renderer.geometricImage = love.graphics.newImage('resources/gfx/bosses/the_geometric.png')
   renderer.stuffingImage = love.graphics.newImage('resources/gfx/bosses/the_stuffing.png')
   renderer.stuffingCharredImage = love.graphics.newImage('resources/gfx/bosses/the_stuffing_charred.png')
-  renderer.geometricPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_geometric_portrait.png')
-  renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_stuffing_portrait.png')
-  renderer.acidImage = love.graphics.newImage('resources/sprites/attack/acid_attack.png')
-  renderer.stuffingProjectileImage = love.graphics.newImage('resources/sprites/attack/the_stuffing_attack.png')
-  renderer.sweatImage = love.graphics.newImage('resources/sprites/attack/sweat_attack.png')
-  renderer.sweatSplashImage = love.graphics.newImage('resources/sprites/attack/sweat_splash.png')
-  renderer.missingUnknownImage = love.graphics.newImage('resources/sprites/characters/missing_character.png')
+  renderer.geometricPortrait = love.graphics.newImage('resources/gfx/ui/boss/portrait_the_geometric.png')
+  renderer.stuffingPortrait = love.graphics.newImage('resources/gfx/ui/boss/portrait_the_stuffing.png')
+  renderer.acidImage = love.graphics.newImage('resources/gfx/effects/acid_attack.png')
+  renderer.stuffingProjectileImage = love.graphics.newImage('resources/gfx/effects/the_stuffing_attack.png')
+  renderer.sweatImage = love.graphics.newImage('resources/gfx/effects/sweat_attack.png')
+  renderer.sweatSplashImage = love.graphics.newImage('resources/gfx/effects/sweat_splash.png')
+  renderer.missingUnknownImage = love.graphics.newImage('resources/gfx/effects/characters/missing_character.png')
   renderer.missingUnknownImage:setFilter('nearest', 'nearest')
-  renderer.fireFoamImage = love.graphics.newImage('resources/sprites/attack/firefoam.png')
+  renderer.fireFoamImage = love.graphics.newImage('resources/gfx/effects/fire_extinguisher_foam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
   renderer.fireSweatImage = loadOptionalImage(FIRE_SWEAT_PATH)
   renderer.minimapInsideImage = loadOptionalImage(MINIMAP_INSIDE_PATH)
@@ -141,9 +190,9 @@ function Renderer.new(atlas)
   end
   renderer.sweatSplashImage:setFilter('nearest', 'nearest')
   renderer.fireFoamImage:setFilter('nearest', 'nearest')
-  local fireFoamJson, fireFoamReadError = love.filesystem.read('resources/sprites/attack/firefoam.json')
+  local fireFoamJson, fireFoamReadError = love.filesystem.read('resources/gfx/effects/fire_extinguisher_foam.json')
   if not fireFoamJson then
-    error('Unable to read firefoam.json: ' .. tostring(fireFoamReadError))
+    error('Unable to read fire_extinguisher_foam.json: ' .. tostring(fireFoamReadError))
   end
   local fireFoamData = Json.decode(fireFoamJson)
   renderer.fireFoamQuads = {}
@@ -153,14 +202,14 @@ function Renderer.new(atlas)
       rect.x, rect.y, rect.w, rect.h, renderer.fireFoamImage:getDimensions()
     )
   end
-  renderer.matthewPortrait = love.graphics.newImage('resources/gfx/ui/stage/character_001_matthew_stage.png')
-  renderer.crawlerPortrait = love.graphics.newImage('resources/gfx/bosses/portraits/the_crawler_portrait.png')
-  renderer.lilSnakePortrait = love.graphics.newImage('resources/gfx/bosses/portraits/lil_snake_portrait.png')
-  renderer.playerNameImage = love.graphics.newImage('resources/gfx/ui/stage/playername_001_matthew.png')
-  renderer.playerIconImage = love.graphics.newImage('resources/gfx/ui/stage/playericon_001_matthew.png')
-  renderer.vsImage = love.graphics.newImage('resources/gfx/ui/stage/vs.png')
-  renderer.lilSnakeNameImage = love.graphics.newImage('resources/gfx/ui/stage/bossname_lilsnake.png')
-  local crawlerNamePath = 'resources/gfx/ui/stage/bossname_the_crawler.png'
+  renderer.matthewPortrait = love.graphics.newImage('resources/gfx/ui/boss/playericon_001_matthew.png')
+  renderer.crawlerPortrait = love.graphics.newImage('resources/gfx/ui/boss/portrait_the_crawler.png')
+  renderer.lilSnakePortrait = love.graphics.newImage('resources/gfx/ui/boss/portrait_lil_snake.png')
+  renderer.playerNameImage = love.graphics.newImage('resources/gfx/ui/boss/playername_001_matthew.png')
+  renderer.playerIconImage = love.graphics.newImage('resources/gfx/ui/boss/playericon_001_matthew.png')
+  renderer.vsImage = love.graphics.newImage('resources/gfx/ui/boss/vs.png')
+  renderer.lilSnakeNameImage = love.graphics.newImage('resources/gfx/ui/boss/bossname_lil_snake.png')
+  local crawlerNamePath = 'resources/gfx/ui/boss/bossname_the_crawler.png'
   if love.filesystem.getInfo(crawlerNamePath) then
     renderer.crawlerNameImage = love.graphics.newImage(crawlerNamePath)
     renderer.crawlerNameImage:setFilter('nearest', 'nearest')
@@ -214,19 +263,16 @@ function Renderer.new(atlas)
   renderer.matthewPortraitQuad = love.graphics.newQuad(0, 0, 64, 64, renderer.matthewPortrait:getDimensions())
   renderer.crawlerPortraitQuad = love.graphics.newQuad(0, 0, 64, 64, renderer.crawlerPortrait:getDimensions())
   renderer.lilSnakePortraitQuad = LilSnake.frames.headRight.quad
-  renderer.heartsImage = love.graphics.newImage('resources/gfx/health/hearts.png')
+  renderer.heartsImage = love.graphics.newImage('resources/gfx/ui/hud/heartshud.png')
   renderer.heartsImage:setFilter('nearest', 'nearest')
-  renderer.coinsIcon = love.graphics.newImage('resources/gfx/ui/stats/coins_icon.png')
+  renderer.coinsIcon = love.graphics.newImage('resources/gfx/ui/hud/coins_icon.png')
   renderer.coinsIcon:setFilter('nearest', 'nearest')
-  renderer.heartQuads = {
-    full = love.graphics.newQuad(0, 0, 32, 32, renderer.heartsImage:getDimensions()),
-    half = love.graphics.newQuad(0, 32, 32, 32, renderer.heartsImage:getDimensions()),
-  }
+  renderer.heartQuads = buildHeartQuads(renderer.heartsImage)
   renderer.statImages = {
-    speed = love.graphics.newImage('resources/gfx/ui/stats/stats_001_speed.png'),
-    attackSpeed = love.graphics.newImage('resources/gfx/ui/stats/stats_002_attackspeed.png'),
-    damage = love.graphics.newImage('resources/gfx/ui/stats/stats_003_damage.png'),
-    range = love.graphics.newImage('resources/gfx/ui/stats/stats_004_range.png'),
+    speed = love.graphics.newImage('resources/gfx/ui/hud/speed_stat.png'),
+    attackSpeed = love.graphics.newImage('resources/gfx/ui/hud/attack_speed_stat.png'),
+    damage = love.graphics.newImage('resources/gfx/ui/hud/damage_stat.png'),
+    range = love.graphics.newImage('resources/gfx/ui/hud/range_stat.png'),
   }
   for _, image in pairs(renderer.statImages) do
     image:setFilter('nearest', 'nearest')
@@ -473,7 +519,7 @@ function Renderer:drawCharacterCarousel(characters, carouselPosition)
       )
 
       local stats = {
-        { key = 'health', value = isLocked and '?' or tostring(math.max(1, math.ceil(100 / 20))), image = self.heartsImage, quad = self.heartQuads.full },
+        { key = 'health', value = isLocked and '?' or tostring(math.max(1, math.ceil(60 / 20))), image = self.heartsImage, quad = self.heartQuads.full },
         { key = 'speed', value = isLocked and '?' or tostring(350), image = self.statImages.speed },
         { key = 'damage', value = isLocked and '?' or tostring(20), image = self.statImages.damage },
         { key = 'range', value = isLocked and '?' or tostring(540), image = self.statImages.range },
@@ -1395,31 +1441,46 @@ function Renderer:drawHud(player, items)
   local heartSpacing = heartSize + 2
   local heartsPerRow = 10
   local health = math.max(0, player.stats.health)
-  local heartCount = math.ceil(math.max(0, player.stats.maxHealth) / 20)
-  local firstRowCount = math.min(heartCount, heartsPerRow)
-  local heartsLeft = rightEdge - firstRowCount * heartSpacing + (heartSpacing - heartSize)
-  local heartsTop = HUD_MARGIN
-  love.graphics.setColor(1, 1, 1, HUD_ALPHA)
+  local heartCount = math.ceil(math.max(0, player.stats.maxHealth) / HP_PER_HEART)
+  local quads = self.heartQuads
+
+  -- One slot per heart, in display order: every red container (full, half or empty),
+  -- then the toxic, ice and gold hearts the player is carrying.
+  local slots = {}
   for index = 1, heartCount do
-    local heartValue = health - (index - 1) * 20
-    if heartValue > 0 then
-      local quad = heartValue >= 20 and self.heartQuads.full or self.heartQuads.half
-      local column = (index - 1) % heartsPerRow
-      local row = math.floor((index - 1) / heartsPerRow)
-      love.graphics.draw(
-        self.heartsImage,
-        quad,
-        math.floor(heartsLeft + column * heartSpacing),
-        math.floor(heartsTop + row * (heartSize + 4)),
-        0,
-        hudScale,
-        hudScale
-      )
+    local heartValue = health - (index - 1) * HP_PER_HEART
+    slots[#slots + 1] = heartValue >= HP_PER_HEART and quads.red.full
+      or heartValue > 0 and quads.red.half
+      or quads.empty
+  end
+  for _, extra in ipairs(EXTRA_HEARTS) do
+    local points = math.max(0, tonumber(player.stats[extra.statKey]) or 0)
+    for index = 1, math.ceil(points / HP_PER_HEART) do
+      slots[#slots + 1] = points - (index - 1) * HP_PER_HEART >= HP_PER_HEART
+        and quads[extra.kind].full or quads[extra.kind].half
     end
   end
 
+  local firstRowCount = math.min(#slots, heartsPerRow)
+  local heartsLeft = rightEdge - firstRowCount * heartSpacing + (heartSpacing - heartSize)
+  local heartsTop = HUD_MARGIN
+  love.graphics.setColor(1, 1, 1, HUD_ALPHA)
+  for index, quad in ipairs(slots) do
+    local column = (index - 1) % heartsPerRow
+    local row = math.floor((index - 1) / heartsPerRow)
+    love.graphics.draw(
+      self.heartsImage,
+      quad,
+      math.floor(heartsLeft + column * heartSpacing),
+      math.floor(heartsTop + row * (heartSize + 4)),
+      0,
+      hudScale,
+      hudScale
+    )
+  end
+
   -- Coins: right-aligned, directly under the hearts.
-  local heartRows = math.max(1, math.ceil(heartCount / heartsPerRow))
+  local heartRows = math.max(1, math.ceil(#slots / heartsPerRow))
   local coinsY = snap(heartsTop + heartRows * (heartSize + 4) + 2)
   local coinsIconScale = snapScale(1.5)
   local coinsText = tostring(player.stats.dollars or 0)
