@@ -18,8 +18,8 @@
   <achievement id="18" text="Unlock The Roof!" gfx="achivement_018_freshair.png" itemunlocks="Burnt Chilli" /> <!-- Item drawn and added -->
 
   <!-- The Attic Unlocks -->
-  <achievement id="6" text="Beat The Attic for the second time!" gfx="achivement_006_backformore.png" itemunlocks="Lollipop" /> <!-- Lollipop drawn but not added -->
-  <achievement id="7" text="Hold 50 coins at once" gfx="achivement_007_unlockcoinsack.png" itemunlocks="Coin Sack" /> <!-- Item not drawn nor added -->
+  <achievement id="6" text="Beat The Attic for the second time!" gfx="achivement_006_backformore.png" itemunlocks="Lollipop" /> <!-- Item drawn but not added -->
+  <achievement id="7" text="Hold 35 dollars at once" gfx="achivement_007_unlockcreditcard.png" itemunlocks="Credit Card" /> <!-- Item drawn but not added -->
   <achievement id="8" text="Beat The Attic as Stella" gfx="achivement_008_unlockdadsring.png" itemunlocks="Dad's Ring" /> <!-- Item not drawn nor added -->
   <achievement id="9" text="Beat a boss in under 60 seconds" gfx="achivement_009_unlockmallet.png" itemunlocks="Mallet" /> <!-- Item drawn and added -->
   <achievement id="10" text="Clear the bedroom without picking up any items" gfx="achivement_010_unlockchildart.png" itemunlocks="Child Art" /> <!-- Item not drawn nor added -->

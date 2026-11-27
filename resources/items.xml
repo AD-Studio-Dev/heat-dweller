@@ -235,7 +235,7 @@
     description="Why is this thing still here? It doesn't even make sense!"
     type="Active"
     quality="1"
-    itempool="secret,event,"
+    itempool="secret,event"
     image="resources/gfx/items/collectibles/collectibles_016_snowman.png"
     bob_speed="1.6"
     bob_height="4"
@@ -365,7 +365,7 @@
     description="Mm... fancy!"
     type="Passive"
     quality="1"
-    itempool="secret,event,"
+    itempool="secret,event"
     image="resources/gfx/items/collectibles/collectibles_025_monocle.png"
     bob_speed="2.2"
     bob_height="3"
@@ -378,10 +378,11 @@
     description="Whack n' Zap"
     type="Passive"
     quality="3"
-    itempool="event,"
+    itempool="event"
     image="resources/gfx/items/collectibles/collectibles_029_remote.png"
     bob_speed="2.2"
     bob_height="3"
     effect="Replaces Matthew's sweat projectiles with a remote."
 />
+
 </items>

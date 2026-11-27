@@ -266,7 +266,7 @@ local TILE_FLOOR_DECALS = {
   roof        = { only = { 'cracks', 'vomit', 'eye' } },
   sky         = { only = {}, chance = 0 },
 }
-local CLOUD_IMAGE_PATH = 'resources/gfx/ui/stage/cloud.png'
+local CLOUD_IMAGE_PATH = 'resources/gfx/effects/sky_cloud.png'
 local cloudImage = nil
 
 local function normalizeOverlayId(id)
@@ -1236,7 +1236,7 @@ local function initializeMenu()
   Breathless.load()
   Aimless.load()
   Linked.load()
-  ladderImage = love.graphics.newImage('resources/gfx/ui/stage/climbingladder.png')
+  ladderImage = love.graphics.newImage('resources/gfx/grid/boss_ladder.png')
   ladderImage:setFilter('nearest', 'nearest')
   renderer = Renderer.new(Atlas)
   renderer.debugKeysEnabled = DEBUG_KEYS
@@ -1300,8 +1300,8 @@ function love.load()
   }
   deathScreenImage = nil
   local deathScreenCandidates = {
-    'resources/gfx/ui/stage/deathscreen.png',
-    'resources/gfx/ui/stage/deathsceen.png',
+    'resources/gfx/ui/death_screen.png',
+    'resources/gfx/ui/death_screen.png',
   }
   for _, deathScreenPath in ipairs(deathScreenCandidates) do
     if love.filesystem.getInfo(deathScreenPath) then
