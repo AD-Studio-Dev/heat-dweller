@@ -24,6 +24,25 @@ function Input.new()
   }, Input)
 end
 
+-- Placing a Flame: either Shift key, or the gamepad's right shoulder button. These
+-- are kept out of `bindings`; a Shift key the player assigns to another action in
+-- the keybind menu stops placing Flames, so one press never does both.
+function Input:isFlameKey(key)
+  if key ~= 'lshift' and key ~= 'rshift' then
+    return false
+  end
+  for _, bound in pairs(self.bindings) do
+    if bound == key then
+      return false
+    end
+  end
+  return true
+end
+
+function Input:isFlameButton(button)
+  return button == 'rightshoulder'
+end
+
 function Input:getAttackDirection(key)
   for direction, binding in pairs({
     up = self.bindings.attackUp,

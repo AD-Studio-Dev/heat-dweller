@@ -222,6 +222,9 @@ View.transition = require('roomtransition').new()
 -- The Remote's state lives on View (not a new top-level local) to stay clear of Lua's 200-local limit.
 View.remote = require('remote').new()
 
+View.Pickups = require('pickups') -- Dollars / Flames / Screwdrivers and Flame bombs
+View.flames = View.Pickups.newBombs()
+
 -- x, y, width, height of a door, always centered on its wall.
 function View.doorRect(direction)
   local w, h, t, l = world.width, world.height, View.WALL_THICKNESS, View.DOOR_LENGTH
@@ -405,7 +408,7 @@ local function generateCurrentFloorRooms(seed)
   local floorType = floorTypeForIndex(world.floorIndex)
   assert(floorType and floorType == world.floorType,
     'Current floor index does not match its floor type.')
-  return Rooms.generate(15, floorType, seed, world.floorIndex)
+  return Rooms.generate(nil, floorType, seed, world.floorIndex)
 end
 
 local function setFloorMusicVolume()
@@ -462,9 +465,16 @@ local function unlockBossRoom()
     return
   end
 
-  currentRoom.dealUnlocked = true
   currentRoom.cleared = true
   doorsLocked = false
+
+  -- The Cultist Deal appears only now that the boss is beaten.
+  local dealRoom, dealDirection = Rooms.spawnCultistDeal(rooms, currentRoom)
+  if dealRoom and not currentRoom.dealUnlocked then
+    seenRooms[dealRoom.id] = true -- puts its cross on the minimap
+    renderer:playDoorAppear(currentRoom.id, dealDirection)
+  end
+  currentRoom.dealUnlocked = true
 
   if currentRoom.doors then
     for _, door in pairs(currentRoom.doors) do
@@ -1652,6 +1662,7 @@ continueRun = function()
   for stat, value in pairs(snapshot.player.stats or {}) do
     player.stats[stat] = value
   end
+  View.Pickups.migrateStats(player.stats)
   for field, value in pairs(snapshot.player) do
     if field == 'speed' or field == 'facing'
         or field == 'damageInvulnerabilityTimer' then
@@ -1812,7 +1823,7 @@ end
 
 local function updateSweatCombat(dt, targets)
   local walls = currentRoom and currentRoom.layout.walls or {}
-  local defeated = SweatProjectile.updateAll(
+  SweatProjectile.updateAll(
     sweatProjectiles,
     sweatSplashes,
     dt,
@@ -1821,15 +1832,6 @@ local function updateSweatCombat(dt, targets)
     world,
     player:getDamage()
   )
-  for _, target in ipairs(defeated) do
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
-      player.stats.dollars = player.stats.dollars + 8
-    elseif target == babyWidow then
-      player.stats.dollars = player.stats.dollars + 3
-    elseif not target.geometricPart then
-      player.stats.dollars = player.stats.dollars + 1
-    end
-  end
 end
 
 -- Crawler and Lil' Snake only move; unlike the other enemies they never touched
@@ -1924,35 +1926,51 @@ function View.remoteExists()
       return true
     end
   end
+  for _, room in ipairs(rooms or {}) do -- or left behind in another room
+    for _, entry in ipairs(room.floorItems or {}) do
+      if entry.id == View.remote.ITEM_ID then
+        return true
+      end
+    end
+  end
   return false
 end
 
--- Same kill rewards as sweat shots and fire foam.
-function View.awardDefeat(target)
-  if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
-    player.stats.dollars = player.stats.dollars + 8
-  elseif target == babyWidow then
-    player.stats.dollars = player.stats.dollars + 3
-  elseif not target.geometricPart then
-    player.stats.dollars = player.stats.dollars + 1
-  end
-end
-
--- Sewer Champion Sogface (sogface.lua sets `bonusPickup`) drops one guaranteed pickup
--- when it dies: a heart (only while hurt), a coin or a key. Pickups live on
--- currentRoom.bonusPickups, so they are saved with the room and survive leaving it.
+-- Floor pickups: the cleared-room reward (Dollar, Flame or Screwdriver) and the Sewer
+-- Champion Sogface's heart. Monsters never drop Dollars, Flames or Screwdrivers.
+-- Pickups live on currentRoom.bonusPickups, so they are saved with the room.
 View.BONUS_PICKUP_RADIUS = 40
-View.BONUS_COIN_VALUE = 5 -- dollars
 View.BONUS_HEART_HEAL = 20 -- one heart (20 HP)
 View.bonusPopups = {}
 
+function View.addFloorPickup(kind, x, y)
+  currentRoom.bonusPickups = currentRoom.bonusPickups or {}
+  currentRoom.bonusPickups[#currentRoom.bonusPickups + 1] = {
+    kind = kind, x = x, y = y, age = 0,
+  }
+end
+
+-- Called once, at the moment a combat room is cleared.
+function View.rollRoomReward()
+  local kind, count = View.Pickups.planRoomReward(rooms, currentRoom)
+  if not kind then
+    return
+  end
+  local solids = Rooms.solidRects(currentRoom.layout) -- a fresh list, safe to add to
+  for index = 1, count do
+    local offsetX = (index - (count + 1) / 2) * 48 -- a cluster sits side by side
+    local x, y = View.Pickups.findOpenSpot(
+      world.width / 2 + offsetX, world.height / 2, solids)
+    View.addFloorPickup(kind, x, y)
+    solids[#solids + 1] = { x = x - 8, y = y - 8, width = 16, height = 16 }
+  end
+end
+
+-- Sewer Champion Sogface (sogface.lua sets `bonusPickup`) leaves a heart, which waits
+-- on the floor until Matthew is hurt.
 function View.spawnBonusPickup(boss)
   if not currentRoom then
     return
-  end
-  local kinds = { 'coin', 'key' }
-  if player.stats.health < player.stats.maxHealth then
-    kinds[#kinds + 1] = 'heart'
   end
   local margin = 128
   local x = math.max(margin, math.min(world.width - margin, boss.x))
@@ -1962,30 +1980,37 @@ function View.spawnBonusPickup(boss)
   if (x - centerX) ^ 2 + (y - centerY) ^ 2 < 120 * 120 then
     x, y = centerX + 170, centerY
   end
-  currentRoom.bonusPickups = currentRoom.bonusPickups or {}
-  currentRoom.bonusPickups[#currentRoom.bonusPickups + 1] = {
-    kind = kinds[math.random(1, #kinds)], x = x, y = y, age = 0,
-  }
+  View.addFloorPickup('heart', x, y)
 end
 
-function View.collectBonusPickup(pickup)
-  local stats = player.stats
-  local text
-  if pickup.kind == 'heart' then
-    stats.health = math.min(stats.maxHealth, stats.health + View.BONUS_HEART_HEAL)
-    text = '+1 HEART'
-  elseif pickup.kind == 'coin' then
-    stats.dollars = stats.dollars + View.BONUS_COIN_VALUE
-    text = '+$' .. View.BONUS_COIN_VALUE
-  else
-    stats.keys = (stats.keys or 0) + 1
-    text = '+1 KEY'
-  end
+function View.playPickupSound()
   if extraSfx.bonusPickup then
     extraSfx.bonusPickup:stop()
     extraSfx.bonusPickup:play()
   end
+end
+
+-- 'coin' and 'key' only come from runs saved before the new pickups.
+View.LEGACY_PICKUP_KINDS = { coin = 'dollar', key = 'screwdriver' }
+
+-- Returns true if the pickup was taken (a heart stays put at full health).
+function View.collectBonusPickup(pickup)
+  local stats = player.stats
+  local kind = View.LEGACY_PICKUP_KINDS[pickup.kind] or pickup.kind
+  local text
+  if kind == 'heart' then
+    if stats.health >= stats.maxHealth then
+      return false
+    end
+    stats.health = math.min(stats.maxHealth, stats.health + View.BONUS_HEART_HEAL)
+    text = '+1 HEART'
+  else
+    View.Pickups.give(stats, kind)
+    text = '+1 ' .. View.Pickups.label(kind)
+  end
+  View.playPickupSound()
   View.bonusPopups[#View.bonusPopups + 1] = { text = text, x = pickup.x, y = pickup.y - 30, life = 1.2 }
+  return true
 end
 
 function View.updateBonusPickups(dt)
@@ -2008,38 +2033,11 @@ function View.updateBonusPickups(dt)
     pickup.age = pickup.age + dt
     if pickup.age >= 0.5 then
       local offsetX, offsetY = player.x - pickup.x, player.y - pickup.y
-      if offsetX * offsetX + offsetY * offsetY <= radius * radius then
-        View.collectBonusPickup(pickup)
+      if offsetX * offsetX + offsetY * offsetY <= radius * radius
+          and View.collectBonusPickup(pickup) then
         table.remove(list, index)
       end
     end
-  end
-end
-
-function View.drawBonusPickupShape(kind)
-  if kind == 'heart' then
-    love.graphics.setColor(0.86, 0.12, 0.2, 1)
-    love.graphics.circle('fill', -6, -4, 7)
-    love.graphics.circle('fill', 6, -4, 7)
-    love.graphics.polygon('fill', -12.5, -1, 12.5, -1, 0, 13)
-    love.graphics.setColor(1, 0.7, 0.72, 0.9)
-    love.graphics.circle('fill', -8, -6, 2)
-  elseif kind == 'coin' then
-    love.graphics.setColor(0.98, 0.8, 0.2, 1)
-    love.graphics.circle('fill', 0, 0, 11)
-    love.graphics.setColor(0.7, 0.5, 0.1, 1)
-    love.graphics.setLineWidth(2)
-    love.graphics.circle('line', 0, 0, 11)
-    love.graphics.circle('line', 0, 0, 6)
-    love.graphics.setLineWidth(1)
-  else
-    love.graphics.setColor(0.98, 0.8, 0.2, 1)
-    love.graphics.setLineWidth(3)
-    love.graphics.circle('line', -8, 0, 5)
-    love.graphics.setLineWidth(1)
-    love.graphics.rectangle('fill', -3, -2, 18, 4)
-    love.graphics.rectangle('fill', 9, 1, 3, 6)
-    love.graphics.rectangle('fill', 14, 1, 3, 5)
   end
 end
 
@@ -2053,11 +2051,8 @@ function View.drawBonusPickups(camera)
       local screenY = math.floor(pickup.y - camera.y)
       love.graphics.setColor(0, 0, 0, 0.25 * appear)
       love.graphics.ellipse('fill', screenX, screenY + 16, 13 * appear, 4)
-      love.graphics.push()
-      love.graphics.translate(screenX, screenY + math.floor(bob))
-      love.graphics.scale(1.4 * appear, 1.4 * appear)
-      View.drawBonusPickupShape(pickup.kind)
-      love.graphics.pop()
+      renderer:drawPickupIcon(View.LEGACY_PICKUP_KINDS[pickup.kind] or pickup.kind,
+        screenX, screenY + math.floor(bob), appear)
     end
   end
   if #View.bonusPopups > 0 and renderer.smallFont then
@@ -2508,7 +2503,7 @@ function love.update(dt)
   for _, enemy in ipairs(enemies) do
     foamTargets[#foamTargets + 1] = enemy
   end
-  local foamDeaths = fireFoam:update(
+  fireFoam:update(
     dt,
     player,
     player.foamEquipped,
@@ -2517,15 +2512,6 @@ function love.update(dt)
     world,
     currentRoom and currentRoom.layout.walls or {}
   )
-  for _, defeated in ipairs(foamDeaths) do
-    if defeated == crawler or defeated == lilSnake or defeated == geometric or defeated == stuffing or defeated == View.sogface or defeated == View.big_broach then
-      player.stats.dollars = player.stats.dollars + 8
-    elseif defeated == babyWidow then
-      player.stats.dollars = player.stats.dollars + 3
-    elseif not defeated.geometricPart then
-      player.stats.dollars = player.stats.dollars + 1
-    end
-  end
   if crawler then
     if crawler:update(dt) then
       spawnBabyWidow()
@@ -2612,9 +2598,7 @@ function love.update(dt)
   for _, enemy in ipairs(enemies) do
     zappable[enemy] = true -- regular enemies only; bosses are never frozen
   end
-  for _, target in ipairs(View.remote:update(dt, player, foamTargets, zappable, player:getDamage())) do
-    View.awardDefeat(target)
-  end
+  View.remote:update(dt, player, foamTargets, zappable, player:getDamage())
 
   local activeBoss = crawler or lilSnake or geometric or stuffing or View.sogface or View.big_broach
   if currentRoom and currentRoom.boss then
@@ -2718,17 +2702,8 @@ local function damageTarget(target, amount)
   end
   if target.takeDamage then
     local defeatedTarget = target:takeDamage(amount)
-    if defeatedTarget then
-      if target == babyWidow and target.onDeath then
-        target.onDeath()
-      end
-      if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
-        player.stats.dollars = player.stats.dollars + 8
-      elseif target == babyWidow then
-        player.stats.dollars = player.stats.dollars + 3
-      elseif not target.geometricPart then
-        player.stats.dollars = player.stats.dollars + 1
-      end
+    if defeatedTarget and target == babyWidow and target.onDeath then
+      target.onDeath()
     end
     return
   end
@@ -2740,13 +2715,6 @@ local function damageTarget(target, amount)
     target.alive = false
     if target == babyWidow and target.onDeath then
       target.onDeath()
-    end
-    if target == crawler or target == lilSnake or target == geometric or target == stuffing or target == View.sogface or target == View.big_broach then
-      player.stats.dollars = player.stats.dollars + 8
-    elseif target == babyWidow then
-      player.stats.dollars = player.stats.dollars + 3
-    elseif not target.geometricPart then
-      player.stats.dollars = player.stats.dollars + 1
     end
   end
 end
@@ -2856,6 +2824,14 @@ function activateHeldItem()
 end
 
 function updateActiveEffects(dt)
+  View.flames:update(dt, {
+    player = player,
+    walls = currentRoom and currentRoom.layout.walls,
+    targets = getLivingRoomTargets,
+    damage = damageTarget,
+    onExplode = function() triggerScreenShake(10) end,
+  })
+
   snowmanArmedTimer = math.max(0, snowmanArmedTimer - dt)
   for index = #activeFireZones, 1, -1 do
     local fire = activeFireZones[index]
@@ -2889,6 +2865,7 @@ function updateActiveEffects(dt)
 end
 
 function drawActiveEffects(camera)
+  View.flames:draw(camera, renderer)
   love.graphics.setColor(0.98, 0.35, 0.08, 0.42)
   for _, fire in ipairs(activeFireZones) do
     local pulse = 0.85 + math.sin(love.timer.getTime() * 12) * 0.15
@@ -3518,11 +3495,25 @@ function love.keypressed(key)
     return
   end
 
+  if input:isFlameKey(key) then
+    if not isPickingUpItem then
+      View.flames:place(player)
+    end
+    return
+  end
+
 end
 
 function love.gamepadpressed(_, button)
   if gameState == 'opening_cutscene' or gameState == 'cutscene_fallback' then
     finishOpeningCutscene()
+    return
+  end
+
+  if gameState == 'playing' then
+    if input:isFlameButton(button) and not isPickingUpItem then
+      View.flames:place(player)
+    end
     return
   end
 
@@ -3932,7 +3923,8 @@ function drawWorld()
         -- Per-doorway type assigned in rooms.lua (nil = ordinary door).
         local doorKind = currentRoom.doors and currentRoom.doors[direction]
           and currentRoom.doors[direction].kind
-        if currentRoom.boss and currentRoom.dealDirection == direction then
+        if currentRoom.cultistDeal
+            or (currentRoom.boss and currentRoom.dealDirection == direction) then
           color, kind = { 0.72, 0.18, 0.7, 1 }, 'deal'
         elseif doorKind == 'shop' then
           color, kind = locked and { 0.4, 0.13, 0.17, 1 } or { 0.66, 0.27, 0.31, 1 }, 'shop'
@@ -4094,6 +4086,7 @@ function openRoomDoorsIfClear()
     for _, door in pairs(currentRoom.doors or {}) do
       door.locked = false
     end
+    View.rollRoomReward()
   end
   return true
 end
@@ -4264,6 +4257,7 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
   sweatProjectiles = {}
   sweatSplashes = {}
   View.remote:clearSwings()
+  View.flames:clear()
   roomIndex = index
   currentRoom = rooms[roomIndex]
   currentRoom.explored = true
@@ -4288,6 +4282,8 @@ function enterRoom(index, entryDirection, skipBossIntro, suppressRoomReward)
       }
     end
     shopOffers = currentRoom.shopOffers
+    currentRoom.pickupStock = currentRoom.pickupStock
+      or View.Pickups.makeShopStock(world.width / 2, world.height / 2 + 150)
   elseif currentRoom.cultistDeal then
     if not currentRoom.cultistOffer then
       currentRoom.cultistOffer = items:makeOffer('cultistdeal', world.width / 2, world.height / 2)
@@ -4369,8 +4365,9 @@ end
 
 -- Door transition: the camera slides from the room we are leaving to the new one,
 -- then the new room is held frozen for a 0.4 s grace period (roomtransition.lua).
--- Entering a boss room skips both: it goes straight to the boss intro. Leaving a
--- boss room (to the previous room or the deal room) uses the slide as normal.
+-- Entering an undefeated boss room skips both: it goes straight to the boss intro.
+-- Every other door, including walking back out of or into a beaten boss room,
+-- uses the slide as normal.
 function beginRoomTransition(targetIndex, direction)
   -- 1. Nothing that moves or hurts may be on screen: clear every projectile and hazard
   --    first, so the picture of the old room has none either.
@@ -4378,11 +4375,14 @@ function beginRoomTransition(targetIndex, direction)
   sweatSplashes = {}
   acidProjectiles = {}
   activeFireZones = {}
+  View.flames:clear()
   fireFoam = FireFoam.new()
   player.velocityX, player.velocityY = 0, 0 -- no drift carried into the new room
 
-  -- Boss rooms: no slide, no grace period. enterRoom() starts the boss intro itself.
-  if rooms[targetIndex] and rooms[targetIndex].boss then
+  -- Undefeated boss: no slide, no grace period. enterRoom() starts the intro itself.
+  local target = rooms[targetIndex]
+  if target and target.boss and not target.cleared then
+    items:moveFloorItems(currentRoom, target)
     enterRoom(targetIndex, direction)
     return
   end
@@ -4391,6 +4391,7 @@ function beginRoomTransition(targetIndex, direction)
   View.captureScene(View.sceneOld)
 
   -- 3. Build the new room exactly as before: enemies, doors, music, autosave.
+  items:moveFloorItems(currentRoom, target)
   enterRoom(targetIndex, direction)
   local nextState = gameState -- 'playing', or 'boss_intro' for an uncleared boss room
 
@@ -5169,7 +5170,8 @@ loadFloor = function(floorIndex)
       View.runBosses[previousRoom.bossType] = true
     end
   end
-  rooms = Rooms.generate(15, nextFloorType, runSeed + floorIndex, floorIndex, View.runBosses)
+  rooms = Rooms.generate(nil, nextFloorType, runSeed + floorIndex, floorIndex, View.runBosses)
+  items.active = {} -- nothing on the old floor's ground comes along
   roomIndex = 1
   currentRoom = nil
   exploredRooms = {}
@@ -5275,6 +5277,16 @@ function tryShopPurchase()
       return true
     end
   end
+  local entry = View.Pickups.stockInRange(currentRoom.pickupStock, player.x, player.y)
+  if entry then
+    if player.stats.dollars >= entry.price then
+      player.stats.dollars = player.stats.dollars - entry.price
+      View.Pickups.give(player.stats, entry.kind)
+      entry.purchased = true
+      View.playPickupSound()
+    end
+    return true
+  end
   return false
 end
 
@@ -5341,6 +5353,17 @@ function drawSpecialRoomContents()
   if currentRoom and currentRoom.shop then
     for _, offer in ipairs(shopOffers or {}) do
       drawOffer(offer)
+    end
+    for _, entry in ipairs(currentRoom.pickupStock or {}) do
+      if not entry.purchased then
+        local screenX = math.floor(entry.x - world.camera.x)
+        local screenY = math.floor(entry.y - world.camera.y)
+        renderer:drawPickupIcon(entry.kind, screenX, screenY, 1)
+        love.graphics.setColor(0.98, 0.88, 0.45, 1)
+        love.graphics.setFont(renderer.smallFont)
+        love.graphics.printf(View.Pickups.label(entry.kind) .. '  $' .. entry.price,
+          screenX - 90, screenY + 22, 180, 'center')
+      end
     end
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.printf(string.format('Dollars: $%d | E to buy', player.stats.dollars), 0, 128, world.camera.width, 'center')

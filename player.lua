@@ -60,9 +60,10 @@ function Player.new(config)
       damage = 3,
       maxHealth = 60, -- 3 full red hearts (20 HP = one heart, 10 HP = a half heart)
       health = 60,
-      dollars = 20,
+      dollars = 0,
+      flames = 0,       -- bombs: placed with Shift (pickups.lua)
+      screwdrivers = 0, -- keys; nothing is locked yet
       luck = 0,
-      keys = 0,
       fireRate = 0,
       size = 1,
     },
@@ -90,6 +91,9 @@ function Player:applyItem(item)
       self.speed = self.speed + amount
     elseif self.stats[stat] then
       self.stats[stat] = self.stats[stat] + amount
+      if stat == 'flames' or stat == 'screwdrivers' then
+        self.stats[stat] = math.max(0, self.stats[stat])
+      end
     end
   end
 

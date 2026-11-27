@@ -20,7 +20,8 @@ local statDisplay = {
   speed = { label = 'Speed', precision = 1 },
   health = { label = 'Max Health', precision = 1 },
   luck = { label = 'Luck', precision = 1 },
-  keys = { label = 'Keys', precision = 0 },
+  screwdrivers = { label = 'Screwdrivers', precision = 0 },
+  flames = { label = 'Flames', precision = 0 },
   fireRate = { label = 'Fire Rate', precision = 1 },
   size = { label = 'Size', precision = 1 },
 }
@@ -52,6 +53,8 @@ local function parseItemDefinitions(xml)
     speed = true,
     luck = true,
     keys = true,
+    screwdrivers = true,
+    flames = true,
     firerate = true,
     sizeup = true,
     cooldown = true,
@@ -70,7 +73,9 @@ local function parseItemDefinitions(xml)
     health = 'health',
     speed = 'speed',
     luck = 'luck',
-    keys = 'keys',
+    keys = 'screwdrivers', -- Screwdrivers are the key resource; old XML still works
+    screwdrivers = 'screwdrivers',
+    flames = 'flames',
     firerate = 'fireRate',
     sizeup = 'size',
   }
@@ -334,13 +339,17 @@ function Items:rerollPassiveInventory(player, x, y)
   end
 
   local stats = player.stats
+  -- Consumables are not part of the reroll: keep exactly what Matthew is carrying.
   local dollars = stats.dollars
+  local flames = stats.flames
+  local screwdrivers = stats.screwdrivers
   local health = stats.health
-  stats.damage = 20
+  stats.damage = 3 -- Matthew's starting base damage (Player.new)
   stats.maxHealth = 60
   stats.health = math.min(health, stats.maxHealth)
   stats.luck = 0
-  stats.keys = 0
+  stats.flames = 0
+  stats.screwdrivers = 0
   stats.fireRate = 0
   stats.size = 1
   stats.dollars = dollars
@@ -354,7 +363,32 @@ function Items:rerollPassiveInventory(player, x, y)
       end
     end
   end
+  stats.flames = flames
+  stats.screwdrivers = screwdrivers
   return true
+end
+
+-- Collectibles lying on the floor belong to the room they are in. Call when Matthew
+-- goes through a door: the old room keeps its items (as plain data, so they save
+-- with the run) and the new room's items come back.
+function Items:moveFloorItems(fromRoom, toRoom)
+  local stored = {}
+  for _, item in ipairs(self.active) do
+    stored[#stored + 1] = {
+      id = item.definition.id, x = item.x, baseY = item.baseY, timer = item.timer,
+    }
+  end
+  fromRoom.floorItems = #stored > 0 and stored or nil
+  self.active = {}
+  for _, entry in ipairs(toRoom.floorItems or {}) do
+    local definition = self.definitions[entry.id]
+    if definition then
+      self.active[#self.active + 1] = {
+        definition = definition, x = entry.x, baseY = entry.baseY, timer = entry.timer,
+      }
+    end
+  end
+  toRoom.floorItems = nil
 end
 
 function Items:spawnFloorReward(x, y)

@@ -35,13 +35,14 @@ end
 -- hugs the canvas edge. HUD_ALPHA lets the brick texture show through it.
 local HUD_MARGIN = 16
 
--- heartshud.png: 32 x 32 cells read left to right, then row by row (so the same order
--- works for one long row or a sheet that wraps). The order is fixed:
---   1 red full   2 red half   3 empty container
+-- heartshud.png: 4 columns of 16 x 16 cells, read left to right, then row by row.
+-- The order is fixed:
+--   1 red full   2 red half   3 empty container      (top row: x = 0, 16, 32)
 --   4 toxic full 5 toxic half 6 ice full 7 ice half 8 gold full 9 gold half
 -- A cell index maps to column = index % columns, row = floor(index / columns), where
--- columns = floor(sheet width / 32), so nothing is hard-coded to one sheet width.
-local HEART_CELL = 16 -- sheet is 64x48: 4 columns x 3 rows of 16x16 hearts
+-- columns = floor(sheet width / 16). Quads use the image's real size, so empty rows
+-- at the bottom of the sheet don't matter.
+local HEART_CELL = 16
 local HEART_SEQUENCE = {
   { 'red', 'full' }, { 'red', 'half' }, { 'empty' },
   { 'toxic', 'full' }, { 'toxic', 'half' },
@@ -85,6 +86,19 @@ local function buildHeartQuads(image)
 end
 local HUD_ALPHA = 0.88
 
+-- pickuphud.png: 32 x 16, two 16 x 16 frames.
+local PICKUP_HUD_PATH = 'resources/gfx/ui/hud/pickuphud.png'
+local PICKUP_CELL = 16
+local PICKUP_FRAME_X = { screwdriver = 0, flame = 16 }
+local PICKUP_ICON_SIZE = 32 -- every pickup icon is drawn in a 32 x 32 box
+-- Left-hand counters, top to bottom. y = 184 sits between the hearts and mid-screen.
+local COUNTER_TOP, COUNTER_ROW_HEIGHT = 184, 40
+local COUNTERS = {
+  { kind = 'dollar', statKey = 'dollars' },
+  { kind = 'flame', statKey = 'flames' },
+  { kind = 'screwdriver', statKey = 'screwdrivers' },
+}
+
 -- Stat icons are 32 x 32 pixel art. They are always drawn at a whole-number scale
 -- (1 = native size) and never shrunk: a fractional or 0.5 scale makes nearest-neighbour
 -- sampling drop and double pixels unevenly, which is what makes them glitch.
@@ -104,19 +118,28 @@ local DOOR_SHEET_PATHS = {
   shop = 'resources/gfx/grid/doors_003_shopdoor.png',
   itemroom = 'resources/gfx/grid/doors_004_itemroomdoor.png',
   shoproom = 'resources/gfx/grid/doors_005_shoproomdoor.png',
+  cultist = 'resources/gfx/grid/doors_006_cultistdealdoor.png',
 }
 -- Which sheet each kind of door uses (kind comes from main.lua's door list).
 local DOOR_SHEET_FOR_KIND = {
-  normal = 'normal', boss = 'boss', deal = 'boss', shop = 'shoproom', item = 'itemroom',
+  normal = 'normal', boss = 'boss', deal = 'cultist', shop = 'shoproom', item = 'itemroom',
 }
 local DOOR_FRAME_SIZE, DOOR_SCALE, DOOR_FRAME_SECONDS = 32, 2, 0.1
+local DOOR_APPEAR_FRAME_SECONDS = 0.14 -- a door that appears plays all five frames
 local DOOR_ROTATION = { up = 0, right = math.pi / 2, down = math.pi, left = -math.pi / 2 }
 
 -- Optional art: a missing file just means the normal look, never a crash.
--- 16x16 minimap room sprites: the room Matthew is in, and every other seen room.
-local MINIMAP_INSIDE_PATH = 'resources/gfx/grid/minimap_insideroom_1x1.png'
-local MINIMAP_OUTSIDE_PATH = 'resources/gfx/grid/minimap_outsideroom_1x1.png'
-local MINIMAP_CELL = 16
+-- Minimap sheet: 64x32, 16x16 cells, drawn edge to edge at 2x.
+local MINIMAP_PATH = 'resources/gfx/ui/hud/minimaphud.png'
+local MINIMAP_CELL, MINIMAP_SCALE = 16, 2
+-- The window shows this many rooms, centred on Matthew's room (odd numbers).
+local MINIMAP_COLUMNS, MINIMAP_ROWS = 7, 5
+local MINIMAP_PADDING = 8
+local MINIMAP_SPRITES = { -- { x, y } on the sheet
+  current = { 0, 0 }, room = { 16, 0 },
+  deal = { 32, 0 }, item = { 48, 0 }, boss = { 0, 16 }, shop = { 16, 16 },
+}
+local MINIMAP_ICON_TYPES = { deal = true, item = true, boss = true, shop = true }
 
 local function loadOptionalImage(path)
   if not love.filesystem.getInfo(path) then
@@ -177,11 +200,12 @@ function Renderer.new(atlas)
   renderer.fireFoamImage = love.graphics.newImage('resources/gfx/effects/fire_extinguisher_foam.png')
   renderer.sweatImage:setFilter('nearest', 'nearest')
   renderer.fireSweatImage = loadOptionalImage(FIRE_SWEAT_PATH)
-  renderer.minimapInsideImage = loadOptionalImage(MINIMAP_INSIDE_PATH)
-  renderer.minimapOutsideImage = loadOptionalImage(MINIMAP_OUTSIDE_PATH)
-  for _, image in ipairs({ renderer.minimapInsideImage or false, renderer.minimapOutsideImage or false }) do
-    if image then
-      image:setFilter('nearest', 'nearest')
+  renderer.minimapImage = loadOptionalImage(MINIMAP_PATH)
+  renderer.minimapQuads = {}
+  if renderer.minimapImage then
+    for name, position in pairs(MINIMAP_SPRITES) do
+      renderer.minimapQuads[name] = love.graphics.newQuad(
+        position[1], position[2], MINIMAP_CELL, MINIMAP_CELL, 64, 32)
     end
   end
   renderer.costumeImages = {}
@@ -283,6 +307,14 @@ function Renderer.new(atlas)
   renderer.coinsIcon = love.graphics.newImage('resources/gfx/ui/hud/coins_icon.png')
   renderer.coinsIcon:setFilter('nearest', 'nearest')
   renderer.heartQuads = buildHeartQuads(renderer.heartsImage)
+  renderer.pickupImage = love.graphics.newImage(PICKUP_HUD_PATH)
+  renderer.pickupImage:setFilter('nearest', 'nearest')
+  renderer.pickupQuads = {}
+  for kind, frameX in pairs(PICKUP_FRAME_X) do
+    renderer.pickupQuads[kind] = love.graphics.newQuad(
+      frameX, 0, PICKUP_CELL, PICKUP_CELL, renderer.pickupImage:getDimensions()
+    )
+  end
   renderer.statImages = {
     speed = love.graphics.newImage('resources/gfx/ui/hud/speed_stat.png'),
     attackSpeed = love.graphics.newImage('resources/gfx/ui/hud/attack_speed_stat.png'),
@@ -1293,7 +1325,9 @@ end
 -- opening animation when it goes from locked to unlocked. Returns false when no
 -- sheet is loaded so the caller can fall back to the procedural door.
 local function drawDoorSprite(self, door, frame)
-  local sheet = self.doorSheets[DOOR_SHEET_FOR_KIND[door.kind or 'normal']] or self.doorSheets.normal
+  local sheet = self.doorSheets[DOOR_SHEET_FOR_KIND[door.kind or 'normal']]
+    or (door.kind == 'deal' and self.doorSheets.boss) -- until the cultist art is in place
+    or self.doorSheets.normal
   if not sheet then
     return false
   end
@@ -1317,6 +1351,11 @@ local function drawDoorSprite(self, door, frame)
     local openFor = state.openedAt and (now - state.openedAt) or math.huge
     local index = math.floor(openFor / DOOR_FRAME_SECONDS) + 1
     quad = sheet.opening[index] or sheet.open
+    if state.appearAt then -- all five frames: closed, three opening, open
+      local step = math.floor((now - state.appearAt) / DOOR_APPEAR_FRAME_SECONDS) + 1
+      local frames = { sheet.closed, sheet.opening[1], sheet.opening[2], sheet.opening[3] }
+      quad = frames[step] or sheet.open
+    end
   end
 
   local half = DOOR_FRAME_SIZE * DOOR_SCALE / 2
@@ -1389,6 +1428,15 @@ local function drawWallDoor(self, theme, geometry, door, frame)
   end
 end
 
+-- Plays the full opening animation on a door that has just appeared in the wall.
+function Renderer:playDoorAppear(roomId, side)
+  if roomId ~= self.doorStateRoom then
+    self.doorStates = {}
+    self.doorStateRoom = roomId
+  end
+  self.doorStates[side] = { locked = false, appearAt = love.timer.getTime() }
+end
+
 -- Draws the whole frame in room coordinates (the caller has already applied the
 -- camera/room offset). `frame` gives the outer rectangle (the canvas edge), the
 -- inner rectangle (the floor) and the door opening length; `doors` is a list of
@@ -1459,14 +1507,37 @@ local function printShadowed(text, x, y, alpha)
   love.graphics.print(text, x, y)
 end
 
--- Everything here floats on the stone walls: minimap top-left with the hearts to
--- its right, coins under the minimap, stats hugging the left wall, inventory along the bottom wall. Each element
--- is slightly transparent so the bricks stay faintly visible beneath it.
-function Renderer:drawHud(player, items, rooms)
-  local screenWidth, screenHeight = love.graphics.getDimensions()
-  local mapX, mapY, mapWidth, mapHeight = self:getMinimapLayout(rooms)
+-- Draws a pickup icon centred on (centerX, centerY) in a 32 x 32 box. `kind` is
+-- 'dollar', 'flame', 'screwdriver' or 'heart'. Used by the HUD, floor and shop.
+function Renderer:drawPickupIcon(kind, centerX, centerY, alpha, tint)
+  local r, g, b = 1, 1, 1
+  if tint then
+    r, g, b = tint[1], tint[2], tint[3]
+  end
+  love.graphics.setColor(r, g, b, alpha or 1)
+  local x = snap(centerX - PICKUP_ICON_SIZE / 2)
+  local y = snap(centerY - PICKUP_ICON_SIZE / 2)
+  if kind == 'dollar' then
+    local width, height = self.coinsIcon:getDimensions()
+    local scale = snapScale(PICKUP_ICON_SIZE / math.max(width, height))
+    love.graphics.draw(self.coinsIcon,
+      snap(centerX - width * scale / 2), snap(centerY - height * scale / 2), 0, scale, scale)
+  elseif kind == 'heart' then
+    love.graphics.draw(self.heartsImage, self.heartQuads.red.full, x, y, 0, 2, 2)
+  elseif self.pickupQuads[kind] then
+    love.graphics.draw(self.pickupImage, self.pickupQuads[kind], x, y, 0, 2, 2)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
 
-  -- Hearts: one horizontal row, to the right of the minimap along the top edge.
+-- Everything here floats on the stone walls: hearts top-left with the Dollar, Flame
+-- and Screwdriver counters below them, stats hugging the left wall, inventory along
+-- the bottom wall (the minimap, top-right, is drawMinimap). Each element is slightly
+-- transparent so the bricks stay faintly visible beneath it.
+function Renderer:drawHud(player, items)
+  local _, screenHeight = love.graphics.getDimensions()
+
+  -- Hearts: one horizontal row in the top-left corner.
   -- Matthew has 3 red containers (60 HP), so he gets exactly 3 hearts.
   local hudScale = 2 -- each 16x16 heart is drawn at an exact 2x (32x32 on screen)
   local heartSize = HEART_CELL * hudScale
@@ -1493,8 +1564,8 @@ function Renderer:drawHud(player, items, rooms)
     end
   end
 
-  local heartsLeft = mapX + mapWidth + 12
-  local heartsTop = mapY
+  local heartsLeft = HUD_MARGIN
+  local heartsTop = HUD_MARGIN
   love.graphics.setColor(1, 1, 1, HUD_ALPHA)
   for index, quad in ipairs(slots) do
     local column = (index - 1) % heartsPerRow
@@ -1510,21 +1581,19 @@ function Renderer:drawHud(player, items, rooms)
     )
   end
 
-  -- Coins: directly under the minimap, left edge flush with the minimap's.
-  local coinsY = snap(mapY + mapHeight + 6)
-  local coinsIconScale = snapScale(1.5)
-  local coinsText = tostring(player.stats.dollars or 0)
-  local coinsGap = 8
-  local coinsX = mapX
-  love.graphics.setColor(1, 1, 1, HUD_ALPHA)
-  love.graphics.draw(self.coinsIcon, coinsX, coinsY, 0, coinsIconScale, coinsIconScale)
+  -- Counters: Dollars, then Flames, then Screwdrivers, flush with the hearts.
   love.graphics.setFont(self.coinsFont)
-  printShadowed(
-    coinsText,
-    snap(coinsX + self.coinsIcon:getWidth() * coinsIconScale + coinsGap),
-    snap(coinsY + (self.coinsIcon:getHeight() * coinsIconScale - self.coinsFont:getHeight()) / 2),
-    HUD_ALPHA
-  )
+  for index, counter in ipairs(COUNTERS) do
+    local rowY = COUNTER_TOP + (index - 1) * COUNTER_ROW_HEIGHT
+    self:drawPickupIcon(counter.kind,
+      HUD_MARGIN + PICKUP_ICON_SIZE / 2, rowY + PICKUP_ICON_SIZE / 2, HUD_ALPHA)
+    printShadowed(
+      tostring(player.stats[counter.statKey] or 0),
+      HUD_MARGIN + PICKUP_ICON_SIZE + 8,
+      snap(rowY + (PICKUP_ICON_SIZE - self.coinsFont:getHeight()) / 2),
+      HUD_ALPHA
+    )
+  end
 
   -- Stats: a column hugging the left wall, vertically centred. Icon against the
   -- wall edge, value right of it, so the block stays inside the 64 px wall band.
@@ -1669,95 +1738,75 @@ function Renderer:drawPickupNotification(item, elapsed, duration)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Minimap panel geometry (top-left corner). Shared with drawHud so the hearts and
--- the coin counter can be placed against the panel's real edges.
-local MINIMAP_PANEL_X, MINIMAP_PANEL_Y = HUD_MARGIN - 4, HUD_MARGIN - 6
-function Renderer:getMinimapLayout(rooms)
-  local panelWidth = 176
-  local panelHeight = 112
-  local panelX, panelY = MINIMAP_PANEL_X, MINIMAP_PANEL_Y
-  local padding = 12
-  local maxDistanceX, maxDistanceY = 0, 0
-  for _, room in ipairs(rooms or {}) do
-    maxDistanceX = math.max(maxDistanceX, math.abs(room.gridX))
-    maxDistanceY = math.max(maxDistanceY, math.abs(room.gridY))
-  end
+-- Minimap panel geometry: a fixed window in the top-right corner.
+function Renderer:getMinimapLayout()
+  local cellSize = MINIMAP_CELL * MINIMAP_SCALE
+  local panelWidth = MINIMAP_COLUMNS * cellSize + MINIMAP_PADDING * 2
+  local panelHeight = MINIMAP_ROWS * cellSize + MINIMAP_PADDING * 2
+  local screenWidth = love.graphics.getDimensions()
+  return screenWidth - HUD_MARGIN - panelWidth, HUD_MARGIN, panelWidth, panelHeight, cellSize
+end
 
-  local gridWidth = math.max(1, maxDistanceX * 2 + 1)
-  local gridHeight = math.max(1, maxDistanceY * 2 + 1)
-  local cellSize = math.floor(math.min((panelWidth - padding * 2) / gridWidth, (panelHeight - padding * 2) / gridHeight))
-  cellSize = math.max(8, math.min(22, cellSize))
+local MINIMAP_FALLBACK_COLORS = {
+  current = { 0.9, 0.9, 0.9 }, room = { 0.5, 0.5, 0.5 }, deal = { 0.66, 0.3, 0.85 },
+  item = { 1, 0.82, 0.2 }, boss = { 0.85, 0.2, 0.18 }, shop = { 0.3, 0.75, 0.35 },
+}
 
-  -- With the 16x16 room sprites, one room = one 16px cell drawn at 1x. The
-  -- sprites carry their own 1px transparent margin, so neighbors sit 2px apart
-  -- with no overlap. The panel grows if a large floor needs more than it holds.
-  local useSprites = self.minimapInsideImage ~= nil and self.minimapOutsideImage ~= nil
-  if useSprites then
-    cellSize = MINIMAP_CELL
-    panelWidth = math.max(panelWidth, gridWidth * cellSize + padding * 2)
-    panelHeight = math.max(panelHeight, gridHeight * cellSize + padding * 2)
+local function drawMinimapSprite(self, name, x, y, size)
+  if self.minimapImage then
+    love.graphics.draw(self.minimapImage, self.minimapQuads[name], x, y, 0, MINIMAP_SCALE, MINIMAP_SCALE)
+    return
   end
-  return panelX, panelY, panelWidth, panelHeight, cellSize, useSprites
+  -- Missing sheet: plain squares (a smaller one for a room's icon).
+  local color = MINIMAP_FALLBACK_COLORS[name]
+  local inset = MINIMAP_ICON_TYPES[name] and 10 or 1
+  local r, g, b, a = love.graphics.getColor()
+  love.graphics.setColor(color[1] * (r or 1), color[2] * (g or 1), color[3] * (b or 1), a or 1)
+  love.graphics.rectangle('fill', x + inset, y + inset, size - inset * 2, size - inset * 2)
+  love.graphics.setColor(r or 1, g or 1, b or 1, a or 1)
 end
 
 function Renderer:drawMinimap(rooms, currentRoomId, seenRooms, exploredRooms)
-  if not rooms or #rooms == 0 then
+  local current = rooms and rooms[currentRoomId]
+  if not current then
     return
   end
 
-  local panelX, panelY, panelWidth, panelHeight, cellSize, useSprites = self:getMinimapLayout(rooms)
-
+  local panelX, panelY, panelWidth, panelHeight, cellSize = self:getMinimapLayout()
   love.graphics.setColor(0.03, 0.04, 0.05, 0.5)
   love.graphics.rectangle('fill', panelX, panelY, panelWidth, panelHeight)
-  love.graphics.setColor(0.65, 0.68, 0.7, 0.35)
-  love.graphics.setLineWidth(1)
-  love.graphics.rectangle('line', panelX + 0.5, panelY + 0.5, panelWidth - 1, panelHeight - 1)
-  love.graphics.setLineWidth(2)
 
-  local function roomPosition(room)
-    return panelX + panelWidth / 2 + room.gridX * cellSize,
-      panelY + panelHeight / 2 + room.gridY * cellSize
-  end
-
+  local halfColumns, halfRows = (MINIMAP_COLUMNS - 1) / 2, (MINIMAP_ROWS - 1) / 2
+  -- A Cultist Deal (saves made before this change) stays off the map until its
+  -- boss is beaten.
+  local hidden = {}
   for _, room in ipairs(rooms) do
-    if seenRooms[room.id] then
-      local x, y = roomPosition(room)
-      for direction, connectedId in pairs(room.connections) do
-        if seenRooms[connectedId] then
-          local connectedRoom = rooms[connectedId]
-          local connectedX, connectedY = roomPosition(connectedRoom)
-          love.graphics.setColor(0.65, 0.68, 0.7, 0.65)
-          love.graphics.line(math.floor(x), math.floor(y), math.floor(connectedX), math.floor(connectedY))
-        end
-      end
+    if room.boss and room.dealRoomId and not room.dealUnlocked then
+      hidden[room.dealRoomId] = true
     end
   end
 
   for _, room in ipairs(rooms) do
-    if seenRooms[room.id] then
-      local x, y = roomPosition(room)
-      if useSprites then
-        local sprite = room.id == currentRoomId and self.minimapInsideImage or self.minimapOutsideImage
+    local explored = exploredRooms[room.id] or room.id == currentRoomId
+    local column = room.gridX - current.gridX + halfColumns
+    local row = room.gridY - current.gridY + halfRows
+    if (explored or seenRooms[room.id]) and not hidden[room.id]
+        and column >= 0 and column < MINIMAP_COLUMNS and row >= 0 and row < MINIMAP_ROWS then
+      local x = math.floor(panelX + MINIMAP_PADDING + column * cellSize)
+      local y = math.floor(panelY + MINIMAP_PADDING + row * cellSize)
+      if explored then
         love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.draw(sprite, math.floor(x - MINIMAP_CELL / 2), math.floor(y - MINIMAP_CELL / 2))
       else
-        if room.id == currentRoomId then
-          love.graphics.setColor(0.95, 0.72, 0.2, 1)
-        elseif not exploredRooms[room.id] then
-          love.graphics.setColor(0.48, 0.5, 0.53, 0.9)
-        elseif room.cleared then
-          love.graphics.setColor(0.25, 0.78, 0.42, 0.9)
-        elseif room.boss then
-          love.graphics.setColor(0.82, 0.25, 0.22, 0.9)
-        else
-          love.graphics.setColor(0.7, 0.72, 0.75, 0.78)
-        end
-        love.graphics.rectangle('fill', math.floor(x - cellSize / 2 + 2), math.floor(y - cellSize / 2 + 2), cellSize - 4, cellSize - 4)
+        love.graphics.setColor(0.55, 0.55, 0.55, 0.9) -- peeked: next to a visited room
+      end
+      drawMinimapSprite(self, room.id == currentRoomId and 'current' or 'room', x, y, cellSize)
+      if MINIMAP_ICON_TYPES[room.roomType] then
+        love.graphics.setColor(1, 1, 1, 1)
+        drawMinimapSprite(self, room.roomType, x, y, cellSize)
       end
     end
   end
 
-  love.graphics.setLineWidth(1)
   love.graphics.setColor(1, 1, 1, 1)
 end
 

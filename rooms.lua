@@ -367,91 +367,227 @@ function Rooms.solidRects(layout)
   return solids
 end
 
+-- Floor layout, after The Binding of Isaac: Rebirth: rooms grow outward from the
+-- centre of a 13x13 grid. gridX / gridY are offsets from that centre (the start).
+local GRID_SIZE = 13
+local GRID_HALF = (GRID_SIZE - 1) / 2
+Rooms.GRID_SIZE = GRID_SIZE
+
+-- floorDepth 1 = 8-9 rooms, 2 = 11-12, 3 = 15-16, 4 = 18-19, 5+ = 20.
+function Rooms.roomCount(floorDepth, random)
+  return math.min(20, random(0, 1) + 5 + math.floor(floorDepth * 10 / 3))
+end
+
+function Rooms.minDeadEnds(floorDepth)
+  return floorDepth >= 2 and 6 or 5
+end
+
+local function inGrid(x, y)
+  return math.abs(x) <= GRID_HALF and math.abs(y) <= GRID_HALF
+end
+
+local function neighbourCount(occupied, x, y)
+  local count = 0
+  for _, direction in ipairs(directions) do
+    if occupied[roomKey(x + direction.dx, y + direction.dy)] then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+-- One expansion attempt. Returns the cells and the occupancy map; the result may be
+-- short of `target` rooms if the branches boxed themselves in.
+local function growCells(random, target)
+  local cells = { { x = 0, y = 0 } }
+  local occupied = { [roomKey(0, 0)] = 1 }
+  local queue, head, restarts = { 1 }, 1, 0
+  while #cells < target do
+    if head > #queue then -- ran dry: branch from the start again, a few times
+      restarts = restarts + 1
+      if restarts > 4 then break end
+      queue[#queue + 1] = 1
+    end
+    local parent = cells[queue[head]]
+    head = head + 1
+    for _, direction in ipairs(directions) do
+      if #cells >= target then break end
+      local x, y = parent.x + direction.dx, parent.y + direction.dy
+      -- A free cell touching only its parent (2+ neighbours would make a blob or
+      -- a loop), then a coin flip so the paths wander and fork.
+      if inGrid(x, y) and not occupied[roomKey(x, y)]
+          and neighbourCount(occupied, x, y) < 2 and random() < 0.5 then
+        cells[#cells + 1] = { x = x, y = y }
+        occupied[roomKey(x, y)] = #cells
+        queue[#queue + 1] = #cells
+      end
+    end
+  end
+  return cells, occupied
+end
+
+-- Where a Cultist Deal can attach to the boss room: a free cell whose only
+-- neighbour is the boss room, so it never needs a door to anything else.
+local function findDealSlot(occupied, bossX, bossY)
+  for _, name in ipairs({ 'up', 'right', 'down', 'left' }) do
+    for _, direction in ipairs(directions) do
+      if direction.name == name then
+        local x, y = bossX + direction.dx, bossY + direction.dy
+        if inGrid(x, y) and not occupied[roomKey(x, y)]
+            and neighbourCount(occupied, x, y) == 1 then
+          return direction, x, y
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- Dead ends (one neighbour, start excluded), farthest from the start first. The
+-- distance is the number of doors walked; ties go to the room generated later.
+local function sortedDeadEnds(cells, occupied)
+  local distance, queue, head = { [1] = 0 }, { 1 }, 1
+  while head <= #queue do
+    local id = queue[head]
+    head = head + 1
+    for _, direction in ipairs(directions) do
+      local nextId = occupied[roomKey(cells[id].x + direction.dx, cells[id].y + direction.dy)]
+      if nextId and not distance[nextId] then
+        distance[nextId] = distance[id] + 1
+        queue[#queue + 1] = nextId
+      end
+    end
+  end
+  local deadEnds = {}
+  for id = 2, #cells do
+    if neighbourCount(occupied, cells[id].x, cells[id].y) == 1 then
+      deadEnds[#deadEnds + 1] = id
+    end
+  end
+  table.sort(deadEnds, function(a, b)
+    if distance[a] ~= distance[b] then return distance[a] > distance[b] end
+    return a > b
+  end)
+  return deadEnds, distance
+end
+
+-- Retries until the layout has the exact room count, enough dead ends and space
+-- beside the boss room for a Cultist Deal.
+local function generateTopology(random, target, minimumDeadEnds)
+  for attempt = 1, 20000 do
+    local cells, occupied = growCells(random, target)
+    if #cells == target then
+      local deadEnds, distance = sortedDeadEnds(cells, occupied)
+      if #deadEnds >= minimumDeadEnds then
+        local boss = cells[deadEnds[1]]
+        if findDealSlot(occupied, boss.x, boss.y) then
+          return cells, occupied, deadEnds, distance, attempt
+        end
+      end
+    end
+  end
+  error('Could not generate a floor with ' .. target .. ' rooms')
+end
+
+local function makeDoors(room)
+  room.doors = {}
+  for direction, connectedId in pairs(room.connections) do
+    room.doors[direction] = { roomId = connectedId, locked = false }
+  end
+end
+
+-- Adds the Cultist Deal beside a defeated boss's room (it is never part of the
+-- generated floor). Safe to call again: returns the existing deal room. Returns
+-- dealRoom, directionFromBossRoom.
+function Rooms.spawnCultistDeal(rooms, bossRoom)
+  if bossRoom.dealRoomId and rooms[bossRoom.dealRoomId] then
+    return rooms[bossRoom.dealRoomId], bossRoom.dealDirection
+  end
+  local occupied = {}
+  for _, room in ipairs(rooms) do
+    occupied[roomKey(room.gridX, room.gridY)] = room.id
+  end
+  local direction, gridX, gridY = findDealSlot(occupied, bossRoom.gridX, bossRoom.gridY)
+  if not direction then
+    return nil
+  end
+  local random = makeRandom(bossRoom.dealSeed or (bossRoom.id * 7919 + 13))
+  for _ = 1, 4 do random() end
+  local dealRoom = {
+    id = #rooms + 1,
+    name = 'Cultist Deal',
+    roomType = 'deal',
+    gridX = gridX,
+    gridY = gridY,
+    connections = { [direction.opposite] = bossRoom.id },
+    layout = makeLayout(random, bossRoom.layout.floor),
+    enemies = {},
+    explored = false,
+    cleared = true,
+    cultistDeal = true,
+  }
+  makeDoors(dealRoom)
+  rooms[dealRoom.id] = dealRoom
+  bossRoom.connections[direction.name] = dealRoom.id
+  bossRoom.doors = bossRoom.doors or {}
+  bossRoom.doors[direction.name] = { roomId = dealRoom.id, locked = false }
+  bossRoom.dealDirection = direction.name
+  bossRoom.dealRoomId = dealRoom.id
+  return dealRoom, direction.name
+end
+
 -- `excludedBosses` (optional set, e.g. { crawler = true }) lists bosses already used earlier
 -- in this run; the boss pool skips them so a boss never repeats within one run.
-function Rooms.generate(maxRooms, floorType, seed, floorIndex, excludedBosses)
-  maxRooms = math.max(3, math.min(maxRooms or 15, 20))
+function Rooms.generate(_, floorType, seed, floorIndex, excludedBosses)
+  -- The first argument (an old room limit) is ignored: Rooms.roomCount decides.
   floorType = floorType or 'basement'
   assert(floorNames[floorType], 'Unsupported floor type: ' .. tostring(floorType))
   if floorIndex ~= nil then
     assert(Rooms.floorTypes[floorIndex] == floorType,
       'Floor index does not match floor type: ' .. tostring(floorIndex))
+  else
+    for index, name in ipairs(Rooms.floorTypes) do
+      if name == floorType then floorIndex = index end
+    end
   end
   seed = seed or os.time()
   local random = makeRandom(seed)
   for _ = 1, 4 do random() end -- warm up the LCG so nearby seeds don't give similar floors
+
+  local cells, occupied, deadEnds = generateTopology(
+    random, Rooms.roomCount(floorIndex, random), Rooms.minDeadEnds(floorIndex))
+  -- Farthest dead end first: boss, then shop, then treasure.
+  local bossId, shopId, itemId = deadEnds[1], deadEnds[2], deadEnds[3]
+
   local rooms = {}
-  local occupied = {}
-  local frontier = {}
-
-  local start = {
-    id = 1,
-    name = floorNames[floorType] .. ' Entrance',
-    roomType = 'start',
-    gridX = 0,
-    gridY = 0,
-    connections = {},
-    layout = makeLayout(random, floorType),
-    enemies = {},
-    explored = false,
-    cleared = true,
-  }
-  rooms[1] = start
-  occupied[roomKey(0, 0)] = 1
-
-  for _, direction in ipairs(directions) do
-    table.insert(frontier, { room = start, direction = direction })
+  for id, cell in ipairs(cells) do
+    local isStart = id == 1
+    -- Built first so enemy placement can avoid this room's walls and obstacles.
+    local layout = makeLayout(random, floorType)
+    local fights = not isStart and id ~= shopId and id ~= itemId and id ~= bossId
+    local room = {
+      id = id,
+      name = floorNames[floorType] .. (isStart and ' Entrance' or ' Room ' .. id),
+      roomType = isStart and 'start' or 'combat',
+      gridX = cell.x,
+      gridY = cell.y,
+      connections = {},
+      layout = layout,
+      enemies = fights and makeEnemies(random, floorType, layout) or {},
+      explored = false,
+      cleared = isStart,
+    }
+    rooms[id] = room
   end
-
-  while #rooms < maxRooms and #frontier > 0 do
-    local frontierIndex = random(1, #frontier)
-    local entry = table.remove(frontier, frontierIndex)
-    local parent = entry.room
-    local direction = entry.direction
-    local gridX = parent.gridX + direction.dx
-    local gridY = parent.gridY + direction.dy
-    local key = roomKey(gridX, gridY)
-
-    if not occupied[key] then
-      -- Built first so enemy placement can avoid this room's walls and obstacles.
-      -- (Same random-number order as before: layout, then enemies.)
-      local layout = makeLayout(random, floorType)
-      local room = {
-        id = #rooms + 1,
-        name = floorNames[floorType] .. ' Room ' .. (#rooms + 1),
-        roomType = 'combat',
-        gridX = gridX,
-        gridY = gridY,
-        connections = {},
-        layout = layout,
-        enemies = makeEnemies(random, floorType, layout),
-        explored = false,
-        cleared = false,
-      }
-      rooms[room.id] = room
-      occupied[key] = room.id
-      parent.connections[direction.name] = room.id
-      room.connections[direction.opposite] = parent.id
-
-      for _, nextDirection in ipairs(directions) do
-        if nextDirection.name ~= direction.opposite then
-          table.insert(frontier, { room = room, direction = nextDirection })
-        end
-      end
-    end
-  end
-
-  -- TODO: Replace this furthest-node rule with authored boss/special-room placement.
-  local bossRoom = rooms[1]
-  local furthestDistance = -1
+  -- Every pair of rooms that touch on the grid shares a door.
   for _, room in ipairs(rooms) do
-    local distance = math.abs(room.gridX) + math.abs(room.gridY)
-    if distance > furthestDistance then
-      bossRoom = room
-      furthestDistance = distance
+    for _, direction in ipairs(directions) do
+      room.connections[direction.name] =
+        occupied[roomKey(room.gridX + direction.dx, room.gridY + direction.dy)]
     end
   end
 
+  local bossRoom = rooms[bossId]
   local bossTypes
   if floorType == 'basement' or floorType == 'living_room' then
     bossTypes = { 'crawler', 'lilsnake', 'sogface' }
@@ -486,73 +622,24 @@ function Rooms.generate(maxRooms, floorType, seed, floorIndex, excludedBosses)
   bossRoom.boss = true
   bossRoom.enemies = { { type = bossRoom.bossType } }
 
-  local shopCandidates = {}
-  for _, room in ipairs(rooms) do
-    if room ~= bossRoom and room.id ~= 1 then
-      table.insert(shopCandidates, room)
-    end
-  end
-  local shopRoom = shopCandidates[random(1, #shopCandidates)]
+  bossRoom.dealSeed = random(1, 2147483000)
+
+  local shopRoom = rooms[shopId]
   shopRoom.shop = true
   shopRoom.roomType = 'shop'
   shopRoom.name = 'Shop'
   shopRoom.cleared = true
-  shopRoom.enemies = {}
+  -- No box blocks in shops: they could cover an item or a pickup for sale.
+  shopRoom.layout.walls = {}
 
-  local itemCandidates = {}
-  for _, room in ipairs(rooms) do
-    if room ~= bossRoom and room ~= shopRoom and room.id ~= 1 then
-      itemCandidates[#itemCandidates + 1] = room
-    end
-  end
-  if #itemCandidates > 0 then
-    local itemRoom = itemCandidates[random(1, #itemCandidates)]
-    itemRoom.itemRoom = true
-    itemRoom.roomType = 'item'
-    itemRoom.name = 'Forgotten Cache'
-    itemRoom.cleared = true
-    itemRoom.enemies = {}
-  end
-
-  local dealDirections = {
-    { name = 'up', dx = 0, dy = -1, opposite = 'down' },
-    { name = 'right', dx = 1, dy = 0, opposite = 'left' },
-    { name = 'down', dx = 0, dy = 1, opposite = 'up' },
-    { name = 'left', dx = -1, dy = 0, opposite = 'right' },
-  }
-  local dealDirection
-  for _, direction in ipairs(dealDirections) do
-    if not occupied[roomKey(bossRoom.gridX + direction.dx, bossRoom.gridY + direction.dy)] then
-      dealDirection = direction
-      break
-    end
-  end
-  if dealDirection then
-    local dealRoom = {
-      id = #rooms + 1,
-      name = 'Cultist Deal',
-      roomType = 'deal',
-      gridX = bossRoom.gridX + dealDirection.dx,
-      gridY = bossRoom.gridY + dealDirection.dy,
-      connections = { [dealDirection.opposite] = bossRoom.id },
-      layout = makeLayout(random, floorType),
-      enemies = {},
-      explored = false,
-      cleared = true,
-      cultistDeal = true,
-    }
-    rooms[dealRoom.id] = dealRoom
-    occupied[roomKey(dealRoom.gridX, dealRoom.gridY)] = dealRoom.id
-    bossRoom.connections[dealDirection.name] = dealRoom.id
-    bossRoom.dealDirection = dealDirection.name
-    bossRoom.dealRoomId = dealRoom.id
-  end
+  local itemRoom = rooms[itemId]
+  itemRoom.itemRoom = true
+  itemRoom.roomType = 'item'
+  itemRoom.name = 'Forgotten Cache'
+  itemRoom.cleared = true
 
   for _, room in ipairs(rooms) do
-    room.doors = {}
-    for direction, connectedId in pairs(room.connections) do
-      room.doors[direction] = { roomId = connectedId, locked = false }
-    end
+    makeDoors(room)
   end
 
   -- Each Shop / Item room gets exactly ONE special doorway: the one toward its

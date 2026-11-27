@@ -1,22 +1,53 @@
--- Main menu with image title logo, additive embers and stronger feedback.
+-- Main menu: off-white notebook doodle style (image logo, pinned paper, hand-drawn options).
 -- Drop-in replacement: same public API as the old MainMenu.
 local MainMenu = {}
 MainMenu.__index = MainMenu
 local drawBackground
 local drawScribble
-local drawFlame
+local drawCursor
+local drawPanel
 local drawLogo
 
 local LOGO_PATH = 'resources/gfx/ui/mainmenu/menu_logo.png'
+local PAPER_PATH = 'resources/gfx/ui/mainmenu/menu_paper.png'
+local OPTIONS_PATH = 'resources/gfx/ui/mainmenu/menu_options.png'
+
+-- menu_options.png: seven 128x32 cells stacked vertically.
+local CELL_WIDTH, CELL_HEIGHT = 128, 32
+local CONTINUE_DISABLED_ROW = 3
+local CURSOR_ROW = 7
+local OPTION_ROWS = { 1, 2, 4, 5, 6 } -- sheet row for each main menu entry
+-- Where the visible ink starts inside each entry's cell (sheet pixels).
+local OPTION_INK_LEFT = { 19, 10, 24, 24, 21 }
+-- The cursor art sits mid-cell: its right edge and vertical centre.
+local CURSOR_INK_RIGHT, CURSOR_INK_CENTER_Y = 77, 16
+
+-- Main screen layout, in canvas pixels.
+local PAPER_SCALE = 2
+local PAPER_BOTTOM_MARGIN = 8
+local MAIN_LOGO_CENTER_Y, MAIN_LOGO_MAX_HEIGHT = 54, 92
+local OPTION_FIRST_CENTER = 210 -- from the paper's top edge, below the pushpin
+local OPTION_SPACING = 68
+local OPTION_HIT_HALF_HEIGHT = 33
+local OPTION_HIT_HALF_WIDTH = 180
+local CURSOR_GAP = 10
 
 local menuOptions = { 'NEW GAME', 'CONTINUE RUN', 'OPTIONS', 'EXTRAS', 'QUIT' }
 local settingsOptions = { 'MUSIC VOLUME', 'SFX VOLUME', 'SCREEN SHAKE', 'BACK' }
 local quitOptions = { 'YES, QUIT', 'NO, STAY' }
 
-local HOT = { 1, 0.86, 0.5 }
-local WARM = { 1, 0.68, 0.28 }
-local DIM = { 0.66, 0.58, 0.47 }
-local DISABLED = { 0.3, 0.26, 0.22 }
+local function rgb(r, g, b)
+  return { r / 255, g / 255, b / 255 }
+end
+
+local HOT = rgb(209, 36, 31) -- #d1241f crimson: selection and highlights
+local WARM = rgb(8, 0, 0) -- #080000 ink: headings and body text
+local DIM = rgb(59, 50, 44) -- #3b322c soft ink: unselected entries and hints
+local DISABLED = rgb(138, 127, 120) -- faded ink
+local PAGE = rgb(209, 198, 194) -- #d1c6c2, the menu_bg.png paper colour
+local CARD = rgb(237, 229, 211) -- cream panels and highlights
+local CARD_SHADE = rgb(207, 194, 173) -- tan inset panels
+local GOOD = rgb(26, 92, 36) -- dark green for stat modifiers
 
 local function playSound(source)
   if source then
@@ -41,6 +72,18 @@ local function setNearestFilter(resource)
   if resource and type(resource.setFilter) == 'function' then
     resource:setFilter('nearest', 'nearest')
   end
+end
+
+local function loadSprite(path)
+  if not love.filesystem.getInfo(path) then
+    return nil
+  end
+  local ok, image = pcall(love.graphics.newImage, path)
+  if not ok or not image then
+    return nil
+  end
+  setNearestFilter(image)
+  return image
 end
 
 -- Loads the title logo and finds the visible (non-transparent, non-white)
@@ -146,20 +189,18 @@ function MainMenu.new(renderer, switchSound, selectSound, cancelSound)
     extrasPageCount = 1,
     optionRects = {},
     hoveredSelection = nil,
-    heatParticles = {},
+    paper = loadSprite(PAPER_PATH),
+    optionSheet = loadSprite(OPTIONS_PATH),
+    optionQuads = {},
   }, MainMenu)
 
-  local screenWidth, screenHeight = love.graphics.getDimensions()
-  for index = 1, 64 do
-    local big = index % 7 == 0
-    menu.heatParticles[index] = {
-      x = (index * 73) % screenWidth,
-      y = (index * 47) % screenHeight,
-      size = big and (4 + index % 3) or (2 + index % 3),
-      speed = (big and 26 or 12) + index % 22,
-      alpha = (big and 0.7 or 0.35) + (index % 5) * 0.08,
-      phase = index * 1.7,
-    }
+  if menu.optionSheet then
+    for row = 1, CURSOR_ROW do
+      menu.optionQuads[row] = love.graphics.newQuad(
+        0, (row - 1) * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT,
+        CELL_WIDTH, CELL_HEIGHT * CURSOR_ROW
+      )
+    end
   end
 
   setNearestFilter(menu.stageBackground)
@@ -538,27 +579,34 @@ function MainMenu:drawPause(input, items)
   if self.pauseFrameCanvas then
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(self.pauseFrameCanvas, 0, 0, 0, 1, 1)
+    -- Dim the frozen game; the ink text sits on a paper panel drawn on top.
     love.graphics.setColor(0.03, 0.025, 0.028, 0.52)
     love.graphics.rectangle('fill', 0, 0, width, height)
   else
-    drawBackground(width, height, self.animationTime, 0.84, nil, self.stageBackground)
-    drawBackground(width, height, self.animationTime, 0.52, self.heatParticles, self.stageBackground)
+    drawBackground(width, height, self.stageBackground)
   end
   local centerX = width / 2
-  drawScribble('PAUSED', centerX, height * 0.18, self.titleFont, { 0.96, 0.84, 0.63 })
+  if self.pauseScreen == 'main' then
+    drawPanel(centerX - 300, height * 0.18 - 36, 600, height * 0.60)
+    drawScribble('PAUSED', centerX, height * 0.18, self.titleFont, WARM)
+  elseif self.pauseScreen == 'options' then
+    drawPanel(centerX - 320, height * 0.13 - 30, 640, height * 0.87 + 14)
+  else
+    drawPanel(14, 24, width - 28, height - 36)
+    drawScribble('PAUSED', centerX, 34, self.renderer.bigFont, WARM)
+  end
 
   local optionFont = self.optionFont
   if self.pauseScreen == 'main' then
-    local cursorY
     for index, option in ipairs(pauseOptions) do
       local y = height * 0.46 + (index - 1) * 54
-      local color = index == self.pauseSelection and HOT or DIM
-      drawScribble(option, centerX, y, optionFont, color)
-      if index == self.pauseSelection then
-        cursorY = y
+      local selected = index == self.pauseSelection
+      drawScribble(option, centerX, y, optionFont, selected and HOT or DIM)
+      if selected then
+        drawCursor(self, centerX - optionFont:getWidth(option) / 2 - CURSOR_GAP,
+          y + optionFont:getHeight() / 2, 1)
       end
     end
-    drawFlame(centerX - 155, cursorY, self.animationTime)
   elseif self.pauseScreen == 'options' then
     drawScribble('OPTIONS - KEYBINDS', centerX, height * 0.13, self.renderer.bigFont, WARM)
     local firstY = height * 0.25
@@ -567,19 +615,22 @@ function MainMenu:drawPause(input, items)
       local selected = index == self.pauseSelection
       local label = binding.label .. '   ' .. (self.pendingBinding == binding.key
         and '[PRESS A KEY]' or string.upper(input.bindings[binding.key]))
-      love.graphics.setColor(selected and 1 or 0.87, selected and 0.68 or 0.81, selected and 0.28 or 0.68, 1)
+      love.graphics.setColor(selected and HOT or WARM)
       love.graphics.setFont(self.renderer.smallFont)
       love.graphics.printf(label, centerX - 210, y, 420, 'center')
       if selected then
-        drawFlame(centerX - 228, y + 7, self.animationTime)
+        drawCursor(self, centerX - self.renderer.smallFont:getWidth(label) / 2 - CURSOR_GAP,
+          y + self.renderer.smallFont:getHeight() / 2, 1)
       end
     end
     local backY = firstY + #remappableBindings * 31
-    drawScribble('BACK', centerX, backY, self.renderer.bigFont, { 0.87, 0.81, 0.68 })
-    if self.pauseSelection == #remappableBindings + 1 then
-      drawFlame(centerX - 74, backY + 9, self.animationTime)
+    local backSelected = self.pauseSelection == #remappableBindings + 1
+    drawScribble('BACK', centerX, backY, self.renderer.bigFont, backSelected and HOT or DIM)
+    if backSelected then
+      drawCursor(self, centerX - self.renderer.bigFont:getWidth('BACK') / 2 - CURSOR_GAP,
+        backY + self.renderer.bigFont:getHeight() / 2, 1)
     end
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.9)
+    love.graphics.setColor(DIM)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf(self.pendingBinding and 'PRESS A KEY TO BIND - ESC TO CANCEL' or 'UP / DOWN SELECT - ENTER REBIND - ESC BACK',
       0, height - 34, width, 'center')
@@ -606,7 +657,7 @@ function MainMenu:drawPause(input, items)
       #self.pauseItems - visibleRows + 1
     ))
     firstIndex = math.max(1, firstIndex)
-    love.graphics.setColor(0.045, 0.028, 0.022, 0.9)
+    love.graphics.setColor(CARD_SHADE)
     love.graphics.rectangle('fill', listX, listY, listWidth, visibleRows * rowHeight, 8, 8)
     for row = 0, visibleRows - 1 do
       local index = firstIndex + row
@@ -614,7 +665,7 @@ function MainMenu:drawPause(input, items)
       if not entry then break end
       local rowTop = listY + row * rowHeight
       if index == self.itemSelection then
-        love.graphics.setColor(0.34, 0.2, 0.09, 0.95)
+        love.graphics.setColor(CARD)
         love.graphics.rectangle('fill', listX + 4, rowTop + 2, listWidth - 8, rowHeight - 4, 5, 5)
       end
       local imageWidth, imageHeight = getImageDimensions(entry.definition.image)
@@ -624,7 +675,7 @@ function MainMenu:drawPause(input, items)
         love.graphics.draw(entry.definition.image, listX + 12, rowTop + (rowHeight - 36) / 2, 0, iconScale, iconScale)
       end
       love.graphics.setFont(self.renderer.smallFont)
-      love.graphics.setColor(0.95, 0.87, 0.73, 1)
+      love.graphics.setColor(index == self.itemSelection and HOT or WARM)
       love.graphics.printf(entry.definition.name .. (entry.count > 1 and '  x' .. entry.count or ''),
         listX + 58, rowTop + (rowHeight - self.renderer.smallFont:getHeight()) / 2,
         listWidth - 68, 'left')
@@ -633,7 +684,7 @@ function MainMenu:drawPause(input, items)
     local selected = self.pauseItems[self.itemSelection]
     local detailX = listX + listWidth + 24
     local detailWidth = width - detailX - 34
-    love.graphics.setColor(0.045, 0.028, 0.022, 0.9)
+    love.graphics.setColor(CARD_SHADE)
     love.graphics.rectangle('fill', detailX, listY, detailWidth, visibleRows * rowHeight, 8, 8)
     if selected then
       local definition = selected.definition
@@ -646,7 +697,7 @@ function MainMenu:drawPause(input, items)
       end
       local contentY = listY + 142
       love.graphics.setFont(self.renderer.bigFont)
-      love.graphics.setColor(1, 0.78, 0.39, 1)
+      love.graphics.setColor(WARM)
       love.graphics.printf(definition.name, detailX + 16, contentY, detailWidth - 32, 'center')
       contentY = contentY + self.renderer.bigFont:getHeight() + 12
       local modifiers = {}
@@ -658,26 +709,26 @@ function MainMenu:drawPause(input, items)
         modifiers[#modifiers + 1] = string.format('Cooldown: %s s', tostring(definition.cooldown or definition.timedCooldown or 0))
       end
       love.graphics.setFont(self.renderer.smallFont)
-      love.graphics.setColor(0.55, 0.94, 0.58, 1)
+      love.graphics.setColor(GOOD)
       love.graphics.printf(#modifiers > 0 and table.concat(modifiers, '  |  ') or 'No stat modifiers',
         detailX + 16, contentY, detailWidth - 32, 'center')
       contentY = contentY + self.renderer.smallFont:getHeight() + 10
-      love.graphics.setColor(0.92, 0.86, 0.75, 1)
+      love.graphics.setColor(WARM)
       love.graphics.printf(definition.description or '', detailX + 20, contentY, detailWidth - 40, 'center')
       if definition.activeEffect then
         local _, descriptionLines = self.renderer.smallFont:getWrap(
           definition.description or '', detailWidth - 40
         )
         contentY = contentY + #descriptionLines * self.renderer.smallFont:getHeight() + 12
-        love.graphics.setColor(0.98, 0.74, 0.4, 1)
+        love.graphics.setColor(DIM)
         love.graphics.printf(definition.activeEffect, detailX + 20, contentY, detailWidth - 40, 'center')
       end
     else
       love.graphics.setFont(self.renderer.smallFont)
-      love.graphics.setColor(0.82, 0.75, 0.62, 1)
+      love.graphics.setColor(WARM)
       love.graphics.printf('No items collected yet.', detailX + 16, listY + 80, detailWidth - 32, 'center')
     end
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.9)
+    love.graphics.setColor(DIM)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf('UP / DOWN SELECT - ESC BACK', 0, height - 34, width, 'center')
   end
@@ -692,24 +743,6 @@ end
 function MainMenu:update(dt)
   self.animationTime = self.animationTime + dt
   self:updateTransition(dt)
-  local screenWidth, screenHeight = love.graphics.getDimensions()
-  for _, particle in ipairs(self.heatParticles) do
-    particle.y = particle.y - particle.speed * dt
-    particle.x = particle.x + math.sin(self.animationTime * 0.7 + particle.phase) * 10 * dt
-    if particle.y < -8 then
-      particle.y = screenHeight + 8
-      particle.x = (particle.x + screenWidth * 0.618) % screenWidth
-    end
-  end
-
-  if self.screen == 'main' then
-    local targetY = screenHeight * 0.45 + (self.selection - 1) * 46
-    if self.cursorY == 0 then
-      self.cursorY = targetY
-    else
-      self.cursorY = self.cursorY + (targetY - self.cursorY) * math.min(1, dt * 12)
-    end
-  end
 end
 
 function MainMenu:resetNavigation(screen)
@@ -771,20 +804,11 @@ function MainMenu:getTransitionOffset()
     self.transitionDirection * 44 * easedProgress
 end
 
+-- main.lua calls this after drawing the menus. The screen slide from
+-- getTransitionOffset is the whole transition now: nothing is tinted or
+-- flashed, so the paper keeps its true colour.
 function MainMenu:drawTransitionOverlay(width, height)
-  if self.transitionTimer > 0 then
-    local progress = self.transitionTimer / self.transitionDuration
-    love.graphics.setColor(0.01, 0.008, 0.006, progress * 0.3)
-    love.graphics.rectangle('fill', 0, 0, width, height)
-  end
-  if self.flashTimer > 0 then
-    -- quick heat flare that fades out
-    local progress = self.flashTimer / self.flashDuration
-    love.graphics.setBlendMode('add')
-    love.graphics.setColor(1, 0.45, 0.12, progress * progress * 0.4)
-    love.graphics.rectangle('fill', 0, 0, width, height)
-    love.graphics.setBlendMode('alpha')
-  end
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function MainMenu:moveSelection(direction)
@@ -965,6 +989,19 @@ function MainMenu:gamepadaxis(axis, value)
   end
 end
 
+-- Main menu entry under the pointer; self.optionY holds each row's centre.
+function MainMenu:mainOptionAt(x, y)
+  if math.abs(x - love.graphics.getWidth() / 2) > OPTION_HIT_HALF_WIDTH then
+    return nil
+  end
+  for index, optionY in ipairs(self.optionY) do
+    if math.abs(y - optionY) <= OPTION_HIT_HALF_HEIGHT then
+      return index
+    end
+  end
+  return nil
+end
+
 function MainMenu:mousepressed(x, y)
   if self.screen == 'title' then
     self:setScreen('main')
@@ -1003,30 +1040,22 @@ function MainMenu:mousepressed(x, y)
     return
   end
 
-  for index, optionY in ipairs(self.optionY) do
-    if math.abs(y - optionY) <= 24 and math.abs(x - love.graphics.getWidth() / 2) <= 220 then
-      if self.selection == index then
-        return self:confirm()
-      end
+  local index = self:mainOptionAt(x, y)
+  if index then
+    if self.selection ~= index then
       self.selection = index
-      self.cursorY = optionY
       playSound(self.switchSound)
-      return self:confirm()
     end
+    return self:confirm()
   end
 end
 
 function MainMenu:mousemoved(x, y)
   if self.screen == 'main' then
-    for index, optionY in ipairs(self.optionY) do
-      if math.abs(y - optionY) <= 24 and math.abs(x - love.graphics.getWidth() / 2) <= 220 then
-        if self.selection ~= index then
-          self.selection = index
-          self.cursorY = optionY
-          playSound(self.switchSound)
-        end
-        return
-      end
+    local index = self:mainOptionAt(x, y)
+    if index and self.selection ~= index then
+      self.selection = index
+      playSound(self.switchSound)
     end
   elseif self.screen == 'options' then
     for index, rect in ipairs(self.optionRects) do
@@ -1059,7 +1088,7 @@ function MainMenu:setExtrasData(data)
 end
 
 function MainMenu:drawCharacterSelectBackground(width, height)
-  drawBackground(width, height, self.animationTime, 0.52, self.heatParticles, self.stageBackground)
+  drawBackground(width, height, self.stageBackground)
   drawScribble(
     'CHOOSE YOUR DWELLER',
     width / 2,
@@ -1073,110 +1102,96 @@ end
 -- Drawing helpers
 ----------------------------------------------------------------------
 
-drawBackground = function(width, height, time, backgroundAlpha, particles, stageImage)
+-- Largest whole-number (or 1/n) scale that is not above `scale`.
+local function snapDown(scale)
+  if scale >= 1 then
+    return math.floor(scale)
+  end
+  return 1 / math.ceil(1 / scale - 1e-9)
+end
+
+drawBackground = function(width, height, stageImage)
+  -- The page colour sits underneath in case the image is missing.
+  love.graphics.setColor(PAGE)
+  love.graphics.rectangle('fill', 0, 0, width, height)
   local imageWidth, imageHeight = getImageDimensions(stageImage)
   if imageWidth and imageHeight then
+    -- Smallest whole-number (or 1/n) scale that still covers the canvas.
     local scale = math.max(width / imageWidth, height / imageHeight)
+    if scale >= 1 then
+      scale = math.ceil(scale - 1e-9)
+    else
+      scale = 1 / math.floor(1 / scale + 1e-9)
+    end
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(
       stageImage,
-      width / 2,
-      height / 2,
+      math.floor((width - imageWidth * scale) / 2),
+      math.floor((height - imageHeight * scale) / 2),
       0,
       scale,
-      scale,
-      imageWidth / 2,
-      imageHeight / 2
+      scale
     )
-  else
-    love.graphics.setColor(0.035, 0.022, 0.018, 1)
-    love.graphics.rectangle('fill', 0, 0, width, height)
-  end
-
-  love.graphics.setColor(0.012, 0.009, 0.008, backgroundAlpha or 0.3)
-  love.graphics.rectangle('fill', 0, 0, width, height)
-
-  if particles then
-    love.graphics.setBlendMode('add')
-    local bands = 14
-    local bandHeight = height * 0.4 / bands
-    local pulse = 0.85 + math.sin(time * 1.3) * 0.15
-    for band = 0, bands - 1 do
-      local fade = (1 - band / bands)
-      love.graphics.setColor(0.9, 0.28, 0.05, fade * fade * 0.07 * pulse)
-      love.graphics.rectangle('fill', 0, height - (band + 1) * bandHeight, width, bandHeight + 1)
-    end
-
-    for _, particle in ipairs(particles) do
-      local shimmer = 0.7 + math.sin(time * 3 + particle.phase) * 0.3
-      local alpha = particle.alpha * shimmer
-      love.graphics.setColor(1, 0.4, 0.1, alpha * 0.35)
-      love.graphics.circle('fill', particle.x, particle.y, particle.size * 2.2)
-      love.graphics.setColor(1, 0.72, 0.3, alpha)
-      love.graphics.circle('fill', particle.x, particle.y, particle.size)
-    end
-    love.graphics.setBlendMode('alpha')
   end
 end
 
+-- Centred, crisp single-pass text.
 drawScribble = function(text, centerX, y, font, color)
   love.graphics.setFont(font)
-  local textWidth = font:getWidth(text)
-  local x = centerX - textWidth / 2
-  love.graphics.setColor(color[1], color[2], color[3], 0.32)
-  love.graphics.print(text, x - 2, y + 1, -0.012)
   love.graphics.setColor(color)
-  love.graphics.print(text, x + 1, y, 0.008)
-  love.graphics.setColor(color[1] * 0.93, color[2] * 0.9, color[3] * 0.82, 0.78)
-  love.graphics.print(text, x, y + 2, -0.004)
+  love.graphics.print(text, math.floor(centerX - font:getWidth(text) / 2), math.floor(y))
 end
 
-drawFlame = function(x, y, time)
-  local sway = math.sin(time * 7) * 2
-  local flicker = 0.85 + math.sin(time * 13) * 0.15
-  love.graphics.setBlendMode('add')
-  love.graphics.setColor(0.9, 0.3, 0.05, 0.22 * flicker)
-  love.graphics.circle('fill', x, y, 24)
-  love.graphics.setBlendMode('alpha')
-  love.graphics.setColor(0.9, 0.25, 0.045, 0.28)
-  love.graphics.ellipse('fill', x, y + 12, 20, 8)
-  love.graphics.setColor(0.94, 0.31, 0.055, 1)
-  love.graphics.polygon('fill',
-    x, y + 13,
-    x - 10 + sway, y + 2,
-    x - 6, y - 10,
-    x, y - 3,
-    x + 7 - sway, y - 13,
-    x + 10, y + 4
-  )
-  love.graphics.setColor(1, 0.72, 0.25, 1)
-  love.graphics.polygon('fill',
-    x, y + 8,
-    x - 4, y + 1,
-    x + 2, y - 7,
-    x + 5, y + 3
-  )
+-- Draws the sheet's ">" cursor so its tip ends at rightX, centred on centerY.
+drawCursor = function(menu, rightX, centerY, scale)
+  local bob = math.floor(math.sin(menu.animationTime * 6) * 2 + 0.5)
+  if menu.optionSheet then
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(
+      menu.optionSheet,
+      menu.optionQuads[CURSOR_ROW],
+      math.floor(rightX + bob - CURSOR_INK_RIGHT * scale),
+      math.floor(centerY - CURSOR_INK_CENTER_Y * scale),
+      0,
+      scale,
+      scale
+    )
+  else
+    love.graphics.setColor(WARM)
+    local tip = math.floor(rightX + bob)
+    love.graphics.polygon('fill',
+      tip, centerY,
+      tip - 12 * scale, centerY - 7 * scale,
+      tip - 12 * scale, centerY + 7 * scale)
+  end
 end
 
-drawLogo = function(menu, centerX, centerY, maxWidth, maxHeight, glowAlpha)
+-- Cream paper card with an ink border and a soft drop shadow.
+drawPanel = function(x, y, width, height)
+  x, y = math.floor(x), math.floor(y)
+  width, height = math.floor(width), math.floor(height)
+  love.graphics.setColor(0, 0, 0, 0.18)
+  love.graphics.rectangle('fill', x + 6, y + 6, width, height, 8, 8)
+  love.graphics.setColor(CARD)
+  love.graphics.rectangle('fill', x, y, width, height, 8, 8)
+  love.graphics.setColor(DIM)
+  love.graphics.setLineWidth(4)
+  love.graphics.rectangle('line', x, y, width, height, 8, 8)
+  love.graphics.setLineWidth(1)
+end
+
+drawLogo = function(menu, centerX, centerY, maxWidth, maxHeight, stayInside)
   local logo = menu.logo
   if not logo then
     return false
   end
   local scale = math.min(maxWidth / logo.width, maxHeight / logo.height)
-  local time = menu.animationTime
-  local flicker = 0.85 + 0.15 * math.sin(time * 9) * math.sin(time * 3.7)
-  local originX, originY = logo.width / 2, logo.height / 2
-
-  love.graphics.setBlendMode('add')
-  love.graphics.setColor(1, 0.3, 0.06, glowAlpha * 0.5 * flicker)
-  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale * 1.1, scale * 1.1, originX, originY)
-  love.graphics.setColor(1, 0.42, 0.1, glowAlpha * flicker)
-  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale * 1.04, scale * 1.04, originX, originY)
-  love.graphics.setBlendMode('alpha')
-
+  if stayInside then
+    scale = snapDown(scale)
+  end
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale, scale, originX, originY)
+  love.graphics.draw(logo.image, logo.quad, centerX, centerY, 0, scale, scale,
+    logo.width / 2, logo.height / 2)
   return true
 end
 
@@ -1184,76 +1199,93 @@ end
 -- Main draw
 ----------------------------------------------------------------------
 
+function MainMenu:drawMainPaper(width, height)
+  local centerX = math.floor(width / 2)
+  local paperWidth, paperHeight = 256 * PAPER_SCALE, 320 * PAPER_SCALE
+  local paperX = centerX - math.floor(paperWidth / 2)
+  local paperY = height - paperHeight - PAPER_BOTTOM_MARGIN
+
+  if self.paper then
+    -- Soft shadow: faint black copies of the paper at growing offsets.
+    for _, offset in ipairs({ { 3, 4 }, { 6, 7 }, { 9, 10 } }) do
+      love.graphics.setColor(0, 0, 0, 0.07)
+      love.graphics.draw(self.paper, paperX + offset[1], paperY + offset[2], 0, PAPER_SCALE, PAPER_SCALE)
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(self.paper, paperX, paperY, 0, PAPER_SCALE, PAPER_SCALE)
+  else
+    drawPanel(paperX + 14, paperY + 28, paperWidth - 28, paperHeight - 40)
+  end
+
+  self.optionY = {}
+  local cellWidth, cellHeight = CELL_WIDTH * PAPER_SCALE, CELL_HEIGHT * PAPER_SCALE
+  for index, option in ipairs(menuOptions) do
+    local rowCenter = paperY + OPTION_FIRST_CENTER + (index - 1) * OPTION_SPACING
+    self.optionY[index] = rowCenter
+    local selected = index == self.selection
+    local disabled = index == 2 and not self.hasSave
+    -- The selected row nudges right and bobs in whole sheet pixels.
+    local nudge = selected
+      and PAPER_SCALE * (2 + math.floor(math.sin(self.animationTime * 6) + 0.5)) or 0
+    local cellX = centerX - math.floor(cellWidth / 2) + nudge
+    local inkLeft
+    if self.optionSheet then
+      local row = disabled and CONTINUE_DISABLED_ROW or OPTION_ROWS[index]
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(self.optionSheet, self.optionQuads[row],
+        cellX, rowCenter - math.floor(cellHeight / 2), 0, PAPER_SCALE, PAPER_SCALE)
+      inkLeft = cellX + OPTION_INK_LEFT[index] * PAPER_SCALE
+    else
+      local color = disabled and DISABLED or (selected and HOT or WARM)
+      drawScribble(option, centerX + nudge, rowCenter - self.optionFont:getHeight() / 2,
+        self.optionFont, color)
+      inkLeft = centerX + nudge - self.optionFont:getWidth(option) / 2
+    end
+    if selected then
+      drawCursor(self, inkLeft - CURSOR_GAP, rowCenter, PAPER_SCALE)
+    end
+  end
+
+  -- Hints sit in the bottom-left corner so they stay clear of the paper.
+  love.graphics.setColor(DIM)
+  love.graphics.setFont(self.renderer.smallFont)
+  love.graphics.printf('UP / DOWN / D-PAD - CHOOSE\nENTER / A - SELECT\nESC / B - BACK',
+    24, height - 96, paperX - 48, 'left')
+end
+
 function MainMenu:draw(input)
   love.graphics.setShader()
   local width = love.graphics.getWidth()
   local height = love.graphics.getHeight()
   local centerX = width / 2
-  drawBackground(width, height, self.animationTime, nil, self.heatParticles, self.stageBackground)
+  drawBackground(width, height, self.stageBackground)
   local offsetX, offsetY = self:getTransitionOffset()
   love.graphics.push()
   love.graphics.translate(offsetX, offsetY)
 
   if self.screen == 'title' then
     local logoY = height * 0.36 + math.sin(self.animationTime * 1.6) * 5
-    local drewLogo = drawLogo(self, centerX, logoY, width * 0.56, height * 0.34, 0.22)
+    local drewLogo = drawLogo(self, centerX, logoY, width * 0.56, height * 0.34)
     if not drewLogo then
-      drawScribble('HEAT DWELLER', centerX, logoY - 30, self.titleFont, { 0.98, 0.84, 0.62 })
+      drawScribble('HEAT DWELLER', centerX, logoY - 30, self.titleFont, WARM)
     end
-
-    drawFlame(centerX - 238, height * 0.66, self.animationTime)
-    drawFlame(centerX + 238, height * 0.66, self.animationTime + 0.7)
-    love.graphics.setFont(self.optionFont)
-    local pulse = 0.8 + math.sin(self.animationTime * 3) * 0.2
-    love.graphics.setColor(1, 0.8, 0.42, pulse)
-    love.graphics.printf('PRESS SPACE TO START', 0, height * 0.65, width, 'center')
-    love.graphics.setFont(self.renderer.smallFont)
-    love.graphics.setColor(0.75, 0.63, 0.49, 0.85)
-    love.graphics.printf('KEYBOARD  /  RETRO GAMEPAD', 0, height - 42, width, 'center')
+  elseif self.screen == 'main' then
+    -- A shorter banner leaves room for the full-size paper underneath.
+    local drewLogo = drawLogo(self, centerX, MAIN_LOGO_CENTER_Y, width * 0.38, MAIN_LOGO_MAX_HEIGHT, true)
+    if not drewLogo then
+      drawScribble('HEAT DWELLER', centerX, MAIN_LOGO_CENTER_Y - 16, self.renderer.bigFont, WARM)
+    end
   else
     -- TBoI-style clean fixed logo banner at top, leaving room for the menu below
     local headerY = height * 0.16
-    local drewLogo = drawLogo(self, centerX, headerY, width * 0.38, height * 0.14, 0.2)
+    local drewLogo = drawLogo(self, centerX, headerY, width * 0.38, height * 0.14)
     if not drewLogo then
-      drawScribble('HEAT DWELLER', centerX, height * 0.12, self.renderer.bigFont, { 0.96, 0.84, 0.63 })
+      drawScribble('HEAT DWELLER', centerX, height * 0.12, self.renderer.bigFont, WARM)
     end
   end
 
   if self.screen == 'main' then
-    self.optionY = {}
-    local optionTop = height * 0.42
-    for index, option in ipairs(menuOptions) do
-      local y = optionTop + (index - 1) * 48
-      self.optionY[index] = y
-      local selected = index == self.selection
-      local color
-      if index == 2 and not self.hasSave then
-        color = DISABLED
-      elseif selected then
-        color = HOT
-      else
-        color = DIM
-      end
-      local hoverOffset = selected and math.sin(self.animationTime * 4) * 2 or 0
-      if selected then
-        local glow = 0.16 + math.sin(self.animationTime * 3) * 0.05
-        love.graphics.setBlendMode('add')
-        love.graphics.setColor(0.95, 0.31, 0.08, glow)
-        love.graphics.rectangle('fill', centerX - 200, y - 6, 400, 38, 8, 8)
-        love.graphics.setColor(0.95, 0.4, 0.1, glow * 0.7)
-        love.graphics.rectangle('fill', centerX - 200, y + 28, 400, 3)
-        love.graphics.setBlendMode('alpha')
-      end
-      love.graphics.push()
-      love.graphics.translate(centerX + (selected and 6 or 0), y + hoverOffset)
-      love.graphics.scale(selected and 1.08 or 1, selected and 1.08 or 1)
-      drawScribble(option, 0, 0, self.optionFont, color)
-      love.graphics.pop()
-    end
-    drawFlame(centerX - 205, self.cursorY == 0 and self.optionY[self.selection] or self.cursorY, self.animationTime)
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.82)
-    love.graphics.setFont(self.renderer.smallFont)
-    love.graphics.printf('UP / DOWN / D-PAD - CHOOSE     ENTER / A - SELECT     ESC / B - BACK', 0, height - 42, width, 'center')
+    self:drawMainPaper(width, height)
   elseif self.screen == 'options' then
     drawScribble('OPTIONS / SETTINGS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     self.optionRects = {}
@@ -1267,54 +1299,52 @@ function MainMenu:draw(input)
       self.optionRects[index] = rect
       local selected = index == self.settingsSelection
       if selected then
-        love.graphics.setBlendMode('add')
-        love.graphics.setColor(0.95, 0.31, 0.08, 0.2)
+        love.graphics.setColor(CARD)
         love.graphics.rectangle('fill', rect.x, rect.y, rect.width, rect.height, 6, 6)
-        love.graphics.setBlendMode('alpha')
       end
       love.graphics.setFont(self.renderer.smallFont)
-      if selected then
-        love.graphics.setColor(1, 0.86, 0.5, 1)
-      else
-        love.graphics.setColor(0.7, 0.62, 0.5, 1)
-      end
+      love.graphics.setColor(selected and HOT or WARM)
       love.graphics.printf(option, rect.x + 14, y + 8, rowWidth * 0.45, 'left')
       if selected then
-        drawFlame(rect.x - 14, y + rowHeight / 2, self.animationTime)
+        drawCursor(self, rect.x - 6, rect.y + rect.height / 2, 1)
       end
       if index <= 2 then
         local value = index == 1 and self.musicVolume or self.sfxVolume
         local barX = rect.x + rowWidth * 0.55
         local barY = y + rowHeight * 0.48
-        love.graphics.setColor(0.2, 0.13, 0.09, 1)
+        love.graphics.setColor(CARD_SHADE)
         love.graphics.rectangle('fill', barX, barY, rowWidth * 0.29, 10, 4, 4)
-        love.graphics.setColor(0.96, 0.39, 0.11, 1)
-        love.graphics.rectangle('fill', barX, barY, rowWidth * 0.29 * value, 10, 4, 4)
-        love.graphics.setColor(0.95, 0.87, 0.73, 1)
+        if value > 0 then
+          love.graphics.setColor(selected and HOT or DIM)
+          love.graphics.rectangle('fill', barX, barY, rowWidth * 0.29 * value, 10, 4, 4)
+        end
+        love.graphics.setColor(WARM)
+        love.graphics.setLineWidth(2)
+        love.graphics.rectangle('line', barX, barY, rowWidth * 0.29, 10, 4, 4)
+        love.graphics.setLineWidth(1)
         love.graphics.printf(string.format('%d%%', math.floor(value * 100 + 0.5)),
           barX + rowWidth * 0.3, y + 8, rowWidth * 0.12, 'right')
       elseif index == 3 then
-        love.graphics.setColor(self.screenShakeEnabled and 0.55 or 0.65,
-          self.screenShakeEnabled and 0.92 or 0.58, self.screenShakeEnabled and 0.53 or 0.5, 1)
+        love.graphics.setColor(self.screenShakeEnabled and WARM or DIM)
         love.graphics.printf(self.screenShakeEnabled and 'ON' or 'OFF',
           rect.x + rowWidth * 0.55, y + 8, rowWidth * 0.4, 'right')
       end
     end
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.82)
+    love.graphics.setColor(DIM)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf('LEFT / RIGHT ADJUST     ENTER TO TOGGLE     ESC / B BACK', 0, height - 42, width, 'center')
   elseif self.screen == 'extras' then
     drawScribble('EXTRAS / STATS', centerX, height * 0.285, self.renderer.bigFont, WARM)
     love.graphics.setFont(self.renderer.smallFont)
-    love.graphics.setColor(0.95, 0.87, 0.73, 1)
+    love.graphics.setColor(WARM)
     love.graphics.printf('RUNS STARTED: ' .. tostring(self.extrasData.runsStarted or 0)
       .. '     BOSSES DEFEATED: ' .. tostring(self.extrasData.bossesDefeated or 0),
       24, height * 0.38, width - 48, 'center')
     love.graphics.printf('FAVORITE ITEM: ' .. tostring(self.extrasData.favoriteItem or 'NONE YET'),
       24, height * 0.43, width - 48, 'center')
-    love.graphics.setColor(1, 0.68, 0.28, 1)
+    love.graphics.setColor(HOT)
     love.graphics.printf('DISCOVERED ITEMS', 24, height * 0.51, width - 48, 'center')
-    love.graphics.setColor(0.82, 0.75, 0.62, 1)
+    love.graphics.setColor(WARM)
     local discovered = self.extrasData.discoveredItems or {}
     local columns = 2
     local rowsPerColumn = math.max(1, math.floor((height * 0.27) / 24))
@@ -1334,33 +1364,38 @@ function MainMenu:draw(input)
     if #discovered == 0 then
       love.graphics.printf('Collect items during a run to discover them here.', 24, height * 0.59, width - 48, 'center')
     end
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.82)
+    love.graphics.setColor(DIM)
     love.graphics.printf(string.format('UP / DOWN PAGE %d / %d     ESC / B / ENTER - BACK',
       self.extrasPage, self.extrasPageCount), 0, height - 42, width, 'center')
   elseif self.screen == 'quit' then
-    love.graphics.setColor(0.01, 0.008, 0.006, 0.72)
-    love.graphics.rectangle('fill', 0, 0, width, height)
     local boxWidth, boxHeight = math.min(520, width - 36), 190
     local boxX, boxY = centerX - boxWidth / 2, height * 0.43
-    love.graphics.setColor(0.12, 0.065, 0.04, 0.98)
-    love.graphics.rectangle('fill', boxX, boxY, boxWidth, boxHeight, 8, 8)
-    love.graphics.setColor(0.84, 0.39, 0.13, 1)
-    love.graphics.rectangle('line', boxX, boxY, boxWidth, boxHeight, 8, 8)
-    drawScribble('ARE YOU SURE YOU WANT TO QUIT?', centerX, boxY + 32, self.renderer.smallFont, { 1, 0.84, 0.63 })
+    drawPanel(boxX, boxY, boxWidth, boxHeight)
+    drawScribble('ARE YOU SURE YOU WANT TO QUIT?', centerX, boxY + 32, self.renderer.smallFont, WARM)
     for index, option in ipairs(quitOptions) do
       local x = centerX + (index == 1 and -100 or 100)
-      local color = index == self.quitSelection and HOT or DIM
-      drawScribble(option, x, boxY + 105, self.renderer.smallFont, color)
+      local selected = index == self.quitSelection
+      drawScribble(option, x, boxY + 105, self.renderer.smallFont, selected and HOT or DIM)
+      if selected then
+        drawCursor(self, x - self.renderer.smallFont:getWidth(option) / 2 - CURSOR_GAP,
+          boxY + 105 + self.renderer.smallFont:getHeight() / 2, 1)
+      end
     end
-    love.graphics.setColor(0.68, 0.55, 0.39, 0.9)
+    love.graphics.setColor(DIM)
     love.graphics.setFont(self.renderer.smallFont)
     love.graphics.printf('LEFT / RIGHT CHOOSE   ENTER CONFIRM   ESC CANCEL', 0, boxY + boxHeight + 16, width, 'center')
   end
 
   if self.message then
-    love.graphics.setColor(1, 0.7, 0.3, 1)
+    love.graphics.setColor(HOT)
     love.graphics.setFont(self.renderer.smallFont)
-    love.graphics.printf(self.message, 24, height - 28, width - 48, 'center')
+    if self.screen == 'main' then
+      -- Bottom-right corner, clear of the paper.
+      local messageX = math.floor(width / 2) + 128 * PAPER_SCALE + 24
+      love.graphics.printf(self.message, messageX, height - 96, width - messageX - 24, 'left')
+    else
+      love.graphics.printf(self.message, 24, height - 28, width - 48, 'center')
+    end
   end
 
   love.graphics.pop()
